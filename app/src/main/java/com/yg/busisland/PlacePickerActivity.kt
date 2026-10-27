@@ -82,59 +82,17 @@ class PlacePickerActivity : androidx.appcompat.app.AppCompatActivity(), Location
 
     // ------------------------------------------------------------ UI
 
+    private lateinit var page: com.yg.busisland.ui.PageScaffold
+
     private fun buildUi() {
-        val page = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(
-                com.google.android.material.color.MaterialColors.getColor(
-                    this@PlacePickerActivity,
-                    com.google.android.material.R.attr.colorSurfaceVariant,
-                    0xFFF2F2F7.toInt()
-                )
-            )
-            setPadding(0, Ui.statusBarHeight(this@PlacePickerActivity), 0, 0)
-        }
+        page = com.yg.busisland.ui.PageScaffold(
+            this, "设置$placeName", "搜索、定位或手动输入坐标",
+            showBack = true, onBack = { finish() }
+        )
 
-        // 顶栏
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(dp(6), dp(4), dp(16), dp(4))
-        }
-        bar.addView(com.google.android.material.button.MaterialButton(
-            this, null, com.google.android.material.R.attr.borderlessButtonStyle
-        ).apply {
-            text = "‹"
-            textSize = 26f
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(dp(12), 0, dp(12), 0)
-            setOnClickListener { finish() }
-        })
-        bar.addView(TextView(this).apply {
-            text = "设置$placeName"
-            textSize = 20f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setTextColor(attrColor(com.google.android.material.R.attr.colorOnSurface))
-        })
-        page.addView(bar)
-
-        // 搜索卡
-        val searchCard = com.google.android.material.card.MaterialCardView(this).apply {
-            radius = dp(18).toFloat()
-            cardElevation = 0f
-            strokeWidth = dp(1)
-            strokeColor = 0x14000000
-            setCardBackgroundColor(attrColor(com.google.android.material.R.attr.colorSurface, Color.WHITE))
-        }
-        val searchBody = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        val searchBody = page.card().apply {
             setPadding(dp(16), dp(12), dp(16), dp(12))
         }
-        searchCard.addView(searchBody)
-        page.addView(searchCard, LinearLayout.LayoutParams(-1, -2).apply {
-            setMargins(dp(14), dp(2), dp(14), dp(10))
-        })
 
         val searchRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -208,11 +166,10 @@ class PlacePickerActivity : androidx.appcompat.app.AppCompatActivity(), Location
             })
         }
 
-        // 状态行
         val statusRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(dp(22), dp(2), dp(22), dp(4))
+            setPadding(dp(4), dp(10), dp(4), dp(2))
         }
         status = TextView(this).apply {
             textSize = 12.5f
@@ -226,17 +183,14 @@ class PlacePickerActivity : androidx.appcompat.app.AppCompatActivity(), Location
         }
         statusRow.addView(status)
         statusRow.addView(progress)
-        page.addView(statusRow)
+        page.body.addView(statusRow)
 
         list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), 0, dp(14), dp(28))
         }
-        val scroll = ScrollView(this)
-        scroll.addView(list)
-        page.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        page.body.addView(list, LinearLayout.LayoutParams(-1, -2))
 
-        setContentView(page)
+        setContentView(page.root)
     }
 
     private fun attrColor(attr: Int, fallback: Int = Color.BLACK): Int =

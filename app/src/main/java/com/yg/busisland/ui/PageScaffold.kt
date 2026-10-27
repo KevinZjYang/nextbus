@@ -35,6 +35,10 @@ class PageScaffold(
         setPadding(0, Ui.statusBarHeight(ctx), 0, 0)
     }
 
+    /** 副标题（没有副标题时为 null） */
+    var bodyLabel: TextView? = null
+        private set
+
     /** 滚动区里的内容容器，所有卡片/分组加到这里 */
     val body = LinearLayout(ctx).apply {
         orientation = LinearLayout.VERTICAL
@@ -68,12 +72,14 @@ class PageScaffold(
             setTextColor(ctx.colorOnSurface())
         })
         if (!subtitle.isNullOrBlank()) {
-            titleBox.addView(TextView(ctx).apply {
+            val sub = TextView(ctx).apply {
                 text = subtitle
                 textSize = Ds.TXT_SUB
                 setTextColor(ctx.colorOnSurfaceVariant())
                 setPadding(0, ctx.dp(3), 0, 0)
-            })
+            }
+            bodyLabel = sub
+            titleBox.addView(sub)
         }
         head.addView(titleBox, LinearLayout.LayoutParams(0, -2, 1f))
         root.addView(head)

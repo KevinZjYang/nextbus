@@ -78,48 +78,18 @@ class NearbyLinesActivity : com.yg.busisland.ui.PageActivity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    private fun buildUi() {
-        val page = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(attrColor(com.google.android.material.R.attr.colorSurfaceVariant, 0xFFF2F2F7.toInt()))
-            setPadding(0, Ui.statusBarHeight(this@NearbyLinesActivity), 0, 0)
-        }
+    private lateinit var page: com.yg.busisland.ui.PageScaffold
 
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(dp(6), dp(4), dp(16), dp(4))
-        }
-        bar.addView(com.google.android.material.button.MaterialButton(
-            this, null, com.google.android.material.R.attr.borderlessButtonStyle
-        ).apply {
-            text = "‹"
-            textSize = 26f
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(dp(12), 0, dp(12), 0)
-            setOnClickListener { finish() }
-        })
-        val titleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        titleBox.addView(TextView(this).apply {
-            text = "附近公交"
-            textSize = 20f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setTextColor(attrColor(com.google.android.material.R.attr.colorOnSurface))
-        })
-        subtitle = TextView(this).apply {
-            text = "当前位置"
-            textSize = 12f
-            setTextColor(attrColor(com.google.android.material.R.attr.colorOnSurfaceVariant))
-        }
-        titleBox.addView(subtitle)
-        bar.addView(titleBox)
-        page.addView(bar)
+    private fun buildUi() {
+        page = com.yg.busisland.ui.PageScaffold(
+            this, "附近公交", "当前位置", showBack = true, onBack = { finish() }
+        )
+        page.bodyLabel?.let { subtitle = it }
 
         val statusRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(dp(20), dp(2), dp(20), dp(4))
+            setPadding(dp(4), dp(6), dp(4), dp(2))
         }
         status = TextView(this).apply {
             textSize = 12.5f
@@ -133,17 +103,15 @@ class NearbyLinesActivity : com.yg.busisland.ui.PageActivity() {
         }
         statusRow.addView(status)
         statusRow.addView(progress)
-        page.addView(statusRow)
+        page.body.addView(statusRow)
 
         list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), 0, dp(14), dp(28))
+            setPadding(0, dp(8), 0, dp(4))
         }
-        val scroll = android.widget.ScrollView(this)
-        scroll.addView(list)
-        page.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        page.body.addView(list, LinearLayout.LayoutParams(-1, -2))
 
-        setContentView(page)
+        setContentView(page.root)
     }
 
     // ------------------------------------------------------------ 定位
