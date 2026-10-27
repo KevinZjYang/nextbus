@@ -11,7 +11,7 @@ import com.yg.busisland.ui.PageScaffold
 import org.json.JSONObject
 
 /** 订阅线路：每条线路绑定到一个地点 + 一个上车点 */
-class LinesActivity : androidx.appcompat.app.AppCompatActivity() {
+class LinesActivity : com.yg.busisland.ui.PageActivity() {
 
     private lateinit var prefs: Prefs
     private lateinit var page: PageScaffold

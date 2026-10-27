@@ -11,7 +11,7 @@ import com.yg.busisland.ui.TimeWheelDialog
 import com.yg.busisland.ui.WeekdayPicker
 
 /** 通勤监控：开关、城市、早晚高峰时段、工作日 */
-class MonitorActivity : androidx.appcompat.app.AppCompatActivity() {
+class MonitorActivity : com.yg.busisland.ui.PageActivity() {
 
     private lateinit var prefs: Prefs
     private lateinit var page: PageScaffold

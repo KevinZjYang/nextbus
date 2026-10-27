@@ -6,7 +6,7 @@ import com.yg.busisland.ui.ListRow
 import com.yg.busisland.ui.PageScaffold
 
 /** 仅 debug 构建可见：岛上诊断、测试推送、最近一次请求 */
-class DebugActivity : androidx.appcompat.app.AppCompatActivity() {
+class DebugActivity : com.yg.busisland.ui.PageActivity() {
 
     private lateinit var prefs: Prefs
     private lateinit var page: PageScaffold

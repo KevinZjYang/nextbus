@@ -15,7 +15,7 @@ import com.yg.busisland.ui.colorPrimary
 import com.yg.busisland.ui.dp
 
 /** 到站提醒：开关、提前几分钟、铃声、岛上岛提示音 */
-class ReminderActivity : androidx.appcompat.app.AppCompatActivity() {
+class ReminderActivity : com.yg.busisland.ui.PageActivity() {
 
     private lateinit var prefs: Prefs
     private lateinit var page: PageScaffold

@@ -19,7 +19,7 @@ import java.util.concurrent.Executors
  *  - EXTRA_PLACE_ID：用某个地点的坐标
  *  - EXTRA_USE_CURRENT：用实时定位（陌生地方）
  */
-class NearbyLinesActivity : AppCompatActivity() {
+class NearbyLinesActivity : com.yg.busisland.ui.PageActivity() {
 
     companion object {
         const val EXTRA_PLACE_ID = "place_id"

@@ -7,7 +7,7 @@ import com.yg.busisland.ui.ListRow
 import com.yg.busisland.ui.PageScaffold
 
 /** 关于：版本、构建类型、协议说明、开源许可 */
-class AboutActivity : androidx.appcompat.app.AppCompatActivity() {
+class AboutActivity : com.yg.busisland.ui.PageActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

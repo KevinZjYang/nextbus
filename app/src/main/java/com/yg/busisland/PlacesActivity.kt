@@ -9,7 +9,7 @@ import com.yg.busisland.ui.ListRow
 import com.yg.busisland.ui.PageScaffold
 
 /** 地点：家、公司、学校…每个地点绑定若干线路 */
-class PlacesActivity : androidx.appcompat.app.AppCompatActivity() {
+class PlacesActivity : com.yg.busisland.ui.PageActivity() {
 
     private lateinit var prefs: Prefs
     private lateinit var page: PageScaffold

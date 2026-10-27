@@ -21,7 +21,7 @@ import android.widget.Toast
 import org.json.JSONObject
 import java.util.Calendar
 
-class MainActivity : androidx.appcompat.app.AppCompatActivity() {
+class MainActivity : com.yg.busisland.ui.PageActivity() {
 
     private lateinit var prefs: Prefs
     private lateinit var statusView: TextView
@@ -32,9 +32,6 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
-        androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
-            .isAppearanceLightStatusBars = !isNightMode()
         prefs = Prefs(this)
         prefs.migrateLegacyPlaces()
         Notify.cleanupOldChannels(this)
@@ -467,8 +464,4 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 
-    private fun isNightMode(): Boolean {
-        val mode = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
-        return mode == android.content.res.Configuration.UI_MODE_NIGHT_YES
-    }
 }

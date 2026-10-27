@@ -48,9 +48,6 @@ class PlacePickerActivity : androidx.appcompat.app.AppCompatActivity(), Location
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
-        androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
-            .isAppearanceLightStatusBars = !isNightMode()
         prefs = Prefs(this)
         placeId = intent.getStringExtra(EXTRA_PLACE_ID).orEmpty()
         if (placeId.isBlank()) {
@@ -622,8 +619,4 @@ class PlacePickerActivity : androidx.appcompat.app.AppCompatActivity(), Location
         if (text.isNotBlank()) status.text = text
     }
 
-    private fun isNightMode(): Boolean {
-        val mode = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
-        return mode == android.content.res.Configuration.UI_MODE_NIGHT_YES
-    }
 }

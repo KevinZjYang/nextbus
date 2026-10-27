@@ -9,7 +9,7 @@ import com.yg.busisland.ui.ListRow
 import com.yg.busisland.ui.PageScaffold
 
 /** 设置：围栏与刷新、后台运行、关于、开发者 */
-class SettingsActivity : androidx.appcompat.app.AppCompatActivity() {
+class SettingsActivity : com.yg.busisland.ui.PageActivity() {
 
     private lateinit var prefs: Prefs
     private lateinit var page: PageScaffold
