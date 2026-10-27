@@ -1,5 +1,8 @@
 # 下一班 · nextbus
 
+[![build](https://github.com/KevinZjYang/nextbus/actions/workflows/build.yml/badge.svg)](https://github.com/KevinZjYang/nextbus/actions/workflows/build.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 > 通勤公交 + 小米澎湃OS 超级岛到站提醒。
 > App 名「下一班」，项目/仓库名 `nextbus`，包名 `com.yg.busisland`。
 
@@ -320,3 +323,9 @@ App 内「调试 / 协议信息」显示最近一次请求 URL 与响应片段�
 - 未实现登录/收藏/换乘；仅使用匿名 `udid`。
 - 媒体通道上岛会带媒体控件外观（暂停/进度条）；官方焦点通知模板需小米授权后才能使用。
 - 焦点通知开关与「允许通知」是两套开关，缺一不可（前者影响 `canShowFocus`，后者影响通知能否发出）。
+
+## 10. 许可证
+
+MIT，见 [LICENSE](LICENSE)。
+
+> 协议参数由样本 APK 逆向得到，仅用于个人学习与自用；请勿用于商业用途或大规模抓取。

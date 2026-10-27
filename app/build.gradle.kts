@@ -10,7 +10,10 @@ val localProps = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
-val amapKey: String = localProps.getProperty("amap.key", "")
+// 优先 local.properties，其次 -Pamap.key=...（CI 用）
+val amapKey: String = localProps.getProperty("amap.key")
+    ?: (project.findProperty("amap.key") as String?)
+    ?: ""
 
 android {
     namespace = "com.yg.busisland"
@@ -26,22 +29,29 @@ android {
         buildConfigField("String", "AMAP_KEY", "\"$amapKey\"")
     }
 
+    // 仓库里不带签名文件；本地放好 keystore/busisland.jks 才会命中固定签名，
+    // CI / 其他人的环境没有该文件时退回默认 debug 签名，照样能构建。
+    val keystoreFile = rootProject.file("keystore/busisland.jks")
+    val hasKeystore = keystoreFile.exists()
+
     signingConfigs {
-        create("app") {
-            storeFile = rootProject.file("keystore/busisland.jks")
-            storePassword = "busisland123"
-            keyAlias = "busisland"
-            keyPassword = "busisland123"
+        if (hasKeystore) {
+            create("app") {
+                storeFile = keystoreFile
+                storePassword = localProps.getProperty("keystore.storePassword") ?: "busisland123"
+                keyAlias = localProps.getProperty("keystore.keyAlias") ?: "busisland"
+                keyPassword = localProps.getProperty("keystore.keyPassword") ?: "busisland123"
+            }
         }
     }
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("app")
+            if (hasKeystore) signingConfig = signingConfigs.getByName("app")
         }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("app")
+            if (hasKeystore) signingConfig = signingConfigs.getByName("app")
         }
     }
 
