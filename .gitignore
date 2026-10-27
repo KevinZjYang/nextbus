@@ -11,14 +11,12 @@ captures/
 .cxx/
 
 # 逆向样本与工具（体积大，本地自备）
-车来了.apk
 tools/jadx/
 *.apk
+
+# 签名文件：本地保留，不进仓库
+keystore/*.jks
 
 # 临时产物
 *.hprof
 *.log
-
-# ǩ���ļ������ر����������ֿ�
-keystore/*.jks
-

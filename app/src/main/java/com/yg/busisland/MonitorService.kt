@@ -313,7 +313,7 @@ class MonitorService : Service(), LocationListener {
             val results = mutableListOf<Pair<LineSub, RealTimeResult>>()
             for (s in subs) {
                 val r = try {
-                    ChelaileClient.realtime(s, udid, loc?.latitude, loc?.longitude)
+                    BusApiClient.realtime(s, udid, loc?.latitude, loc?.longitude)
                 } catch (e: Exception) {
                     RealTimeResult("", "", emptyList(), false, e.message ?: "请求失败")
                 }
@@ -325,8 +325,8 @@ class MonitorService : Service(), LocationListener {
 
     private fun render(placeName: String, results: List<Pair<LineSub, RealTimeResult>>) {
         polling = false
-        prefs.lastQueryUrl = ChelaileClient.lastUrl
-        prefs.lastQueryBody = ChelaileClient.lastBody.take(4000)
+        prefs.lastQueryUrl = BusApiClient.lastUrl
+        prefs.lastQueryBody = BusApiClient.lastBody.take(4000)
 
         // 多条订阅时轮播，保证每条都有机会上岛
         val withBus = results.filter { it.second.ok && it.second.buses.isNotEmpty() }

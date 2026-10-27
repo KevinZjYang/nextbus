@@ -35,7 +35,7 @@ data class Place(
     }
 }
 
-/** 附近站点（车来了 nearPhysicalStns） */
+/** 附近站点（nearPhysicalStns） */
 data class NearbyStation(
     val sId: String,
     val physicalStId: String,
@@ -45,7 +45,7 @@ data class NearbyStation(
     val lng: Double
 )
 
-/** 某个站点经过的线路（车来了 phyStnDetail） */
+/** 某个站点经过的线路（phyStnDetail） */
 data class StationLine(
     val sId: String,
     val stationName: String,

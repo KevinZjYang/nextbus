@@ -13,8 +13,8 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * 车来了网关客户端（协议见 docs/api.md）。所有方法均为阻塞调用，请在后台线程执行。 */
-object ChelaileClient {
+ * 公交接口客户端（协议见 docs/protocol.md）。所有方法均为阻塞调用，请在后台线程执行。 */
+object BusApiClient {
 
     private const val HOST = "api.chelaile.net.cn"
     private const val SIGN_KEY = "woqunimalegebi1234567890"
@@ -64,7 +64,7 @@ object ChelaileClient {
         return m
     }
 
-    /** 按经纬度反查城市（车来了 localCity） */
+    /** 按经纬度反查城市（localCity） */
     fun localCity(lat: Double, lng: Double, udid: String): CityInfo? {
         val p = common(null, udid)
         p["lat"] = lat.toString()

@@ -9,7 +9,7 @@ import com.amap.api.location.AMapLocationClient
 import com.amap.api.location.AMapLocationClientOption
 
 /**
- * 高德定位封装（与车来了同源：高德 Wi-Fi/基站库）。
+ * 高德定位封装（Wi-Fi/基站定位）。
  * 未配置 key 时 available=false，调用方回退系统 LocationManager。
  */
 object AmapLocator {

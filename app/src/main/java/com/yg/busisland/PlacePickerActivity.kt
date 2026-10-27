@@ -271,7 +271,7 @@ class PlacePickerActivity : androidx.appcompat.app.AppCompatActivity(), Location
         list.removeAllViews()
 
         Thread {
-            val res = runCatching { ChelaileClient.searchPoi(cid, keyword, prefs.udid) }
+            val res = runCatching { BusApiClient.searchPoi(cid, keyword, prefs.udid) }
             runOnUiThread {
                 showLoading(false, "")
                 res.onFailure {
@@ -367,7 +367,7 @@ class PlacePickerActivity : androidx.appcompat.app.AppCompatActivity(), Location
     /** 用该点的坐标反查城市，保证后续搜索用对城市 */
     private fun resolveCityFrom(lat: Double, lng: Double, fallbackCityId: String, pid: String) {
         Thread {
-            val c = runCatching { ChelaileClient.localCity(lat, lng, prefs.udid) }.getOrNull()
+            val c = runCatching { BusApiClient.localCity(lat, lng, prefs.udid) }.getOrNull()
             if (c != null) {
                 prefs.cityId = c.id
                 prefs.cityName = c.name

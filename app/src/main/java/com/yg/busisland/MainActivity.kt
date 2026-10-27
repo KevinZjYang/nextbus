@@ -74,19 +74,19 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         Thread {
             val log = StringBuilder()
             runCatching {
-                val lines = ChelaileClient.search("027", "1", prefs.udid)
+                val lines = BusApiClient.search("027", "1", prefs.udid)
                 log.append("search=").append(lines.size).append('\n')
                 val first = lines.first()
                 val lineId = first.optString("lineId")
                 val name = first.optString("name")
                 log.append("line=").append(lineId).append(' ').append(name).append('\n')
-                val st = ChelaileClient.routeStations("027", lineId, name, prefs.udid)
+                val st = BusApiClient.routeStations("027", lineId, name, prefs.udid)
                 log.append("stations=").append(st.length()).append('\n')
                 if (st.length() > 1) {
                     val s = st.getJSONObject(1)
                     val sub = LineSub("027", lineId, name, name, first.optInt("direction", 0),
                         s.optInt("order"), s.optString("sn"), s.optString("sId"), "home")
-                    val r = ChelaileClient.realtime(sub, prefs.udid)
+                    val r = BusApiClient.realtime(sub, prefs.udid)
                     log.append("realtime ok=").append(r.ok).append(" desc=").append(r.lineDesc)
                         .append(" buses=").append(r.buses.size)
                 }
@@ -467,7 +467,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     private fun resolveCity(lat: Double, lng: Double) {
         toast("识别城市中…")
         Thread {
-            val c = runCatching { ChelaileClient.localCity(lat, lng, prefs.udid) }.getOrNull()
+            val c = runCatching { BusApiClient.localCity(lat, lng, prefs.udid) }.getOrNull()
             runOnUiThread {
                 if (c == null) {
                     toast("城市识别失败，请手动搜索")
@@ -496,7 +496,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 toast("加载城市列表…")
                 Thread {
                     if (cityCache.isEmpty()) {
-                        cityCache = runCatching { ChelaileClient.cities(prefs.udid) }.getOrDefault(emptyList())
+                        cityCache = runCatching { BusApiClient.cities(prefs.udid) }.getOrDefault(emptyList())
                     }
                     val hits = cityCache.filter {
                         it.name.contains(key) || it.pinyin.contains(key, ignoreCase = true)
@@ -536,7 +536,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
             var changed = false
             for (m in missing) {
                 val arr = runCatching {
-                    ChelaileClient.routeStations(m.cityId, m.lineId, m.lineName, prefs.udid)
+                    BusApiClient.routeStations(m.cityId, m.lineId, m.lineName, prefs.udid)
                 }.getOrNull() ?: continue
                 if (arr.length() < 2) continue
                 val first = arr.optJSONObject(0)?.optString("sn").orEmpty()
@@ -778,7 +778,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 }
                 toast("搜索中…")
                 Thread {
-                    val result = runCatching { ChelaileClient.search(cid, k, prefs.udid) }
+                    val result = runCatching { BusApiClient.search(cid, k, prefs.udid) }
                     runOnUiThread {
                         result.onSuccess { pickLine(cid, place, it) }
                             .onFailure { toast("搜索失败：${it.message}") }
@@ -819,7 +819,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     private fun loadStations(cityId: String, lineId: String, lineName: String, lineNo: String, dir: Int, place: String) {
         toast("加载站点…")
         Thread {
-            val r = runCatching { ChelaileClient.routeStations(cityId, lineId, lineName, prefs.udid) }
+            val r = runCatching { BusApiClient.routeStations(cityId, lineId, lineName, prefs.udid) }
             runOnUiThread {
                 r.onFailure { toast("站点加载失败：${it.message}") }
                 r.onSuccess { arr ->

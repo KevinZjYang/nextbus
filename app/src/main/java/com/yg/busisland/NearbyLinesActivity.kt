@@ -196,7 +196,7 @@ class NearbyLinesActivity : AppCompatActivity() {
         progress.visibility = View.VISIBLE
 
         pool.execute {
-            val stations = runCatching { ChelaileClient.nearStations(city, lat, lng, prefs.udid) }
+            val stations = runCatching { BusApiClient.nearStations(city, lat, lng, prefs.udid) }
                 .getOrDefault(emptyList())
                 .take(MAX_STATIONS)
             if (stations.isEmpty()) {
@@ -213,7 +213,7 @@ class NearbyLinesActivity : AppCompatActivity() {
             for (st in stations) {
                 pool.execute {
                     val lines = runCatching {
-                        ChelaileClient.stationLines(city, st.physicalStId, lat, lng, prefs.udid)
+                        BusApiClient.stationLines(city, st.physicalStId, lat, lng, prefs.udid)
                     }.getOrDefault(emptyList()).take(MAX_LINES)
                     synchronized(lock) { data.add(st to lines) }
                     latch.countDown()

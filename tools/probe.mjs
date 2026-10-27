@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 车来了 API 探针 / 参考实现
+ * 样本 App API 探针 / 参考实现
  *
  * 用法:
  *   node tools/probe.mjs search  --city 027 --key 1

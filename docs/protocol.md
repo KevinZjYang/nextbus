@@ -1,6 +1,6 @@
-# 车来了 API 协议（实测可用）
+# 公交接口协议（实测可用）
 
-样本：`com.ygkj.chelaile.standard` v7.6.8 (versionCode 436)，`classes6.dex` 中 `dev.xesam.chelaile.sdk.*`。
+样本：`com.vendor.busapp` v7.6.8 (versionCode 436)，`classes6.dex` 中 `dev.vendor.sdk.*`。
 以下结论均已在 2026-10-27 线上验证（HTTP 200 / status `00`）。
 
 ---
