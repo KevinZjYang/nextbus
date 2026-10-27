@@ -23,7 +23,7 @@ import org.json.JSONObject
 /**
  * 家/公司选点：搜索地点 / 一键定位 / 粘贴坐标 / 手动输入。
  */
-class PlacePickerActivity : androidx.appcompat.app.AppCompatActivity(), LocationListener {
+class PlacePickerActivity : com.yg.busisland.ui.PageActivity(), LocationListener {
 
     companion object {
         const val EXTRA_WHICH = "which"   // 兼容旧调用

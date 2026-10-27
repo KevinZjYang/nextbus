@@ -5,7 +5,7 @@
 
 通勤公交实时到站 + 小米澎湃OS 超级岛提醒。设好家/公司，通勤时段走到附近，自动查车并把「线路 + 还有几分钟」显示在岛上。
 
-<img src="docs/screenshots/main.webp" width="230" alt="概览"> <img src="docs/screenshots/monitor.webp" width="230" alt="通勤监控"> <img src="docs/screenshots/timewheel.webp" width="230" alt="时间滚轮">
+<img src="docs/screenshots/main.webp" width="196" alt="概览"> <img src="docs/screenshots/monitor.webp" width="196" alt="通勤监控"> <img src="docs/screenshots/timewheel.webp" width="196" alt="时间滚轮"> <img src="docs/screenshots/settings.webp" width="196" alt="设置">
 
 ## 功能
 

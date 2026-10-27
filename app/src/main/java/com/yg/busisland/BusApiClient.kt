@@ -221,6 +221,11 @@ object BusApiClient {
     /** 附近物理站点 */
     fun nearStations(cityId: String, lat: Double, lng: Double, udid: String): List<NearbyStation> {
         val p = common(cityId, udid)
+        // 实测：该接口只认明文 lat/lng/gpstype，encLoc 完全被忽略
+        // （传垃圾 encLoc 结果不变；不传明文只按 udid 走缓存，容易返回空）
+        p["lat"] = lat.toString()
+        p["lng"] = lng.toString()
+        p["gpstype"] = "gcj"
         p["encLoc"] = encLoc(lat, lng)
         val body = httpGet("https://$HOST/bus/stop!encryptedNearPhysicalStns.action?" + inflate(p))
         val jr = parseEnvelope(body)
