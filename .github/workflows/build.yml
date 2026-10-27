@@ -12,28 +12,26 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/master' }}
 
+      # ubuntu runner 自带 Android SDK（licenses 已接受），AGP 会按需自动下载 platform 33
       - name: Assemble debug APK
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace \
-            -Pamap.key="${AMAP_KEY:-}"
+          ./gradlew assembleDebug --no-daemon --stacktrace -Pamap.key="${AMAP_KEY:-}"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
