@@ -186,9 +186,13 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
         page.addView(chips)
 
         val scroll = androidx.core.widget.NestedScrollView(this)
+        val navInset = window?.decorView?.let {
+            androidx.core.view.ViewCompat.getRootWindowInsets(it)
+                ?.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars())?.bottom ?: 0
+        } ?: 0
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(6), dp(14), dp(12))
+            setPadding(dp(14), dp(6), dp(14), dp(12) + maxOf(navInset, dp(24)))
         }
         scroll.addView(content)
         page.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -221,10 +225,18 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
         tvIsland = row(monitorCard, "🏝", "灵动岛") { openIslandSettings() }
         statusView = TextView(this).apply {
             textSize = 12f
-            setPadding(dp(16), dp(2), dp(16), dp(14))
+            setPadding(dp(16), dp(2), dp(16), dp(6))
             setTextColor(attrColor(com.google.android.material.R.attr.colorOnSurfaceVariant))
         }
         monitorCard.addView(statusView)
+
+        // 主操作跟着概览卡走，不再做贴底常驻条
+        content.addView(com.google.android.material.button.MaterialButton(this).apply {
+            text = "立即查询一次"
+            isAllCaps = false
+            textSize = 15f
+            setOnClickListener { refreshNow() }
+        }, LinearLayout.LayoutParams(-1, dp(50)).apply { topMargin = dp(12) })
 
         // ---- 地点
         content.addView(section("地点"))
@@ -253,27 +265,6 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
         tvSettings = row(setCard, "⚙️", "围栏、后台与关于") {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
-        // ---- 底部常驻操作条（不随内容滚动）
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(attrColor(com.google.android.material.R.attr.colorSurfaceVariant))
-            setPadding(dp(16), dp(8), dp(16), dp(10))
-        }
-        bar.addView(android.view.View(this).apply {
-            setBackgroundColor(0x14000000)
-        }, LinearLayout.LayoutParams(-1, 1))
-        val bottomPad = window?.decorView?.let {
-            ViewCompat.getRootWindowInsets(it)?.getInsets(WindowInsetsCompat.Type.navigationBars())?.bottom ?: 0
-        } ?: 0
-        bar.setPadding(dp(16), dp(8), dp(16), dp(10) + (bottomPad / 2))
-        bar.addView(com.google.android.material.button.MaterialButton(this).apply {
-            text = "立即查询一次"
-            isAllCaps = false
-            textSize = 15f
-            setOnClickListener { refreshNow() }
-        }, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(8) })
-        page.addView(bar, LinearLayout.LayoutParams(-1, -2))
-
         setContentView(page)
     }
 
