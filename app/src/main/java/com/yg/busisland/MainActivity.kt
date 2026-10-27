@@ -18,6 +18,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
 import java.util.Calendar
 
@@ -186,7 +188,7 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
         val scroll = androidx.core.widget.NestedScrollView(this)
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(6), dp(14), dp(36))
+            setPadding(dp(14), dp(6), dp(14), dp(12))
         }
         scroll.addView(content)
         page.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -251,12 +253,26 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
         tvSettings = row(setCard, "⚙️", "围栏、后台与关于") {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
-        page.addView(com.google.android.material.button.MaterialButton(this).apply {
+        // ---- 底部常驻操作条（不随内容滚动）
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(attrColor(com.google.android.material.R.attr.colorSurfaceVariant))
+            setPadding(dp(16), dp(8), dp(16), dp(10))
+        }
+        bar.addView(android.view.View(this).apply {
+            setBackgroundColor(0x14000000)
+        }, LinearLayout.LayoutParams(-1, 1))
+        val bottomPad = window?.decorView?.let {
+            ViewCompat.getRootWindowInsets(it)?.getInsets(WindowInsetsCompat.Type.navigationBars())?.bottom ?: 0
+        } ?: 0
+        bar.setPadding(dp(16), dp(8), dp(16), dp(10) + (bottomPad / 2))
+        bar.addView(com.google.android.material.button.MaterialButton(this).apply {
             text = "立即查询一次"
             isAllCaps = false
             textSize = 15f
             setOnClickListener { refreshNow() }
-        }, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(10) })
+        }, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(8) })
+        page.addView(bar, LinearLayout.LayoutParams(-1, -2))
 
         setContentView(page)
     }
