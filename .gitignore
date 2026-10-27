@@ -1,0 +1,24 @@
+# Gradle / Android
+.gradle/
+.kotlin/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# é€†å‘æ ·æœ¬ä¸å·¥å…·ï¼ˆä½“ç§¯å¤§ï¼Œæœ¬åœ°è‡ªå¤‡ï¼‰
+è½¦æ¥äº†.apk
+tools/jadx/
+*.apk
+
+# ä¸´æ—¶äº§ç‰©
+*.hprof
+*.log
+
+# Ç©ÃûÎÄ¼ş£º±¾µØ±£Áô£¬²»½ø²Ö¿â
+keystore/*.jks
+
