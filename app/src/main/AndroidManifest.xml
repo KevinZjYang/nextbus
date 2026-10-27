@@ -41,6 +41,36 @@
         </activity>
 
         <activity
+            android:name=".PlacesActivity"
+            android:exported="false"
+            android:label="常去地点" />
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="设置" />
+
+        <activity
+            android:name=".AboutActivity"
+            android:exported="false"
+            android:label="关于" />
+
+        <activity
+            android:name=".DebugActivity"
+            android:exported="false"
+            android:label="开发者" />
+
+        <activity
+            android:name=".ReminderActivity"
+            android:exported="false"
+            android:label="到站提醒" />
+
+        <activity
+            android:name=".MonitorActivity"
+            android:exported="false"
+            android:label="通勤监控" />
+
+        <activity
             android:name=".NearbyLinesActivity"
             android:exported="true"
             android:label="附近线路" />
