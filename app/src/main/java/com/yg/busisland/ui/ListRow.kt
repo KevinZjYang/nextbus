@@ -46,6 +46,8 @@ object ListRow {
             textSize = Ds.TXT_ROW
             setTextColor(ctx.colorOnSurface())
             setPadding(ctx.dp(8), 0, ctx.dp(8), 0)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
         })
 
@@ -53,7 +55,9 @@ object ListRow {
             text = value.orEmpty()
             textSize = Ds.TXT_ROW_VALUE
             setTextColor(ctx.colorOnSurfaceVariant())
-            maxLines = 2
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            maxWidth = (ctx.resources.displayMetrics.widthPixels * 0.52f).toInt()
             gravity = Gravity.END
         }
         row.addView(valueView)

@@ -41,7 +41,6 @@ class LinesActivity : com.yg.busisland.ui.PageActivity() {
             val placeName = prefs.placeById(l.place)?.name ?: "未绑定"
             val sub = buildString {
                 append(l.stationName)
-                if (l.routeText.isNotBlank()) append(" · ").append(l.routeText)
                 append(" · ").append(placeName)
             }
             ListRow.add(card, "🚌", l.title, sub) { remove(l) }

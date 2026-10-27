@@ -44,6 +44,7 @@
             android:name=".PlacesActivity"
             android:exported="false"
             android:label="常去地点" />
+        <activity android:name=".LinesActivity" android:exported="false" />
 
         <activity
             android:name=".SettingsActivity"

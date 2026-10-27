@@ -141,7 +141,7 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
     private lateinit var tvChipIsland: TextView
     private lateinit var swMonitor: com.google.android.material.switchmaterial.SwitchMaterial
     private lateinit var tvIsland: TextView
-    private lateinit var tvSchedule: TextView
+    private lateinit var tvMonitorSet: TextView
     private lateinit var tvSettings: TextView
     private lateinit var tvPlaces: TextView
     private lateinit var tvLines: TextView
@@ -219,7 +219,7 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
             }
         }
         monitorCard.addView(swMonitor)
-        row(monitorCard, "⏱", "通勤监控设置") {
+        tvMonitorSet = row(monitorCard, "⏱", "通勤监控设置") {
             startActivity(Intent(this, MonitorActivity::class.java))
         }
         tvIsland = row(monitorCard, "🏝", "灵动岛") { openIslandSettings() }
@@ -244,13 +244,17 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
         tvPlaces = row(placeCard, "📍", "常去地点") {
             startActivity(Intent(this, PlacesActivity::class.java))
         }
+        val tvNearby = row(placeCard, "🧭", "附近公交") {
+            startActivity(
+                Intent(this, NearbyLinesActivity::class.java)
+                    .putExtra(NearbyLinesActivity.EXTRA_USE_CURRENT, true)
+            )
+        }
+        tvNearby.text = "当前位置"
 
         // ---- 提醒
         content.addView(section("提醒规则"))
         val ruleCard = newCard(content)
-        tvSchedule = row(ruleCard, "⏰", "通勤时段") {
-            startActivity(Intent(this, MonitorActivity::class.java))
-        }
         tvLines = row(ruleCard, "🚌", "订阅线路") {
             startActivity(Intent(this, LinesActivity::class.java))
         }
@@ -322,11 +326,14 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
             textSize = 15.5f
             setTextColor(attrColor(com.google.android.material.R.attr.colorOnSurface))
             setPadding(dp(12), 0, dp(8), 0)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
         })
         val value = TextView(this).apply {
             textSize = 13f
             maxLines = 1
+            maxWidth = (resources.displayMetrics.widthPixels * 0.52f).toInt()
             ellipsize = android.text.TextUtils.TruncateAt.END
             setTextColor(attrColor(com.google.android.material.R.attr.colorOnSurfaceVariant))
         }
@@ -364,15 +371,8 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
     private fun scheduleSummary(): String {
         val s = prefs.schedule
         fun hm(m: Int) = "%02d:%02d".format(m / 60, m % 60)
-        val days = buildString {
-            val names = arrayOf("一", "二", "三", "四", "五", "六", "日")
-            val on = (0..6).filter { s.weekdays and (1 shl it) != 0 }
-            if (on.isEmpty()) append("未选")
-            else if (on == listOf(0, 1, 2, 3, 4)) append("工作日")
-            else if (on.size == 7) append("每天")
-            else append(on.joinToString("") { names[it] })
-        }
-        return "${hm(s.morningStart)}–${hm(s.morningEnd)} / ${hm(s.eveningStart)}–${hm(s.eveningEnd)} · $days"
+        // 概览行只放时段，工作日进设置页看，避免挤压标题
+        return "${hm(s.morningStart)}–${hm(s.morningEnd)} · ${hm(s.eveningStart)}–${hm(s.eveningEnd)}"
     }
 
     private fun render() {
@@ -381,7 +381,7 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
         tvChipMonitor.setTextColor(if (prefs.enabled) 0xFF1F7A3D.toInt() else Color.GRAY)
         tvChipIsland.text = "🏝 ${islandLabel()}"
         tvIsland.text = islandLabel()
-        tvSchedule.text = scheduleSummary()
+        tvMonitorSet.text = scheduleSummary()
         tvLines.text = "${prefs.lines.size} 条"
         tvPlaces.text = "${prefs.places.size} 个"
         tvRemind.text = if (prefs.remindEnabled)
