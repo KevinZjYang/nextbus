@@ -2,7 +2,10 @@ package com.yg.busisland
 
 import android.app.AlertDialog
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
@@ -20,11 +23,14 @@ import com.amap.api.maps.AMap
 import com.amap.api.maps.CameraUpdateFactory
 import com.amap.api.maps.MapsInitializer
 import com.amap.api.maps.TextureMapView
+import com.amap.api.maps.model.BitmapDescriptor
 import com.amap.api.maps.model.BitmapDescriptorFactory
 import com.amap.api.maps.model.LatLng
 import com.amap.api.maps.model.LatLngBounds
 import com.amap.api.maps.model.MarkerOptions
 import com.amap.api.maps.model.PolylineOptions
+import com.amap.api.maps.model.Text
+import com.amap.api.maps.model.TextOptions
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.yg.busisland.ui.PageActivity
@@ -49,13 +55,18 @@ import java.util.concurrent.Executors
 class NearbyMapActivity : PageActivity() {
 
     companion object {
+        const val EXTRA_LINE_ID = "line_id"
+        const val EXTRA_DIRECTION = "direction"
+
         private const val MAP_LOAD_TIMEOUT_MS = 8_000L
+        private const val LIVE_REFRESH_MS = 15_000L
     }
 
     private lateinit var prefs: Prefs
     private val loader = NearbyLoader()
     private val main = Handler(Looper.getMainLooper())
     private val routeExecutor = Executors.newSingleThreadExecutor()
+    private val liveExecutor = Executors.newSingleThreadExecutor()
 
     private var data: NearbyData? = null
     private var rows: List<NearbyLineRow> = emptyList()
@@ -66,6 +77,21 @@ class NearbyMapActivity : PageActivity() {
     private var routeLoading = false
     private var routeRequest = 0
     private val routeCache = HashMap<String, LineRoute>()
+    private var liveBus: BusPosition? = null
+    private var liveBusStatus = ""
+    private var liveBusLoading = false
+    private var liveBusRequest = 0
+    private var labelsHidden = false
+    private val liveTick = object : Runnable {
+        override fun run() {
+            if (isFinishing || isDestroyed) return
+            val row = selectedRow()
+            if (row != null && mapReady && !loading && !routeLoading && !liveBusLoading) {
+                loadLiveBus(row)
+            }
+            main.postDelayed(this, LIVE_REFRESH_MS)
+        }
+    }
 
     private var mapView: TextureMapView? = null
     private var map: AMap? = null
@@ -73,7 +99,8 @@ class NearbyMapActivity : PageActivity() {
     private var mapReady = false
     private var mapLoadCheck: Runnable? = null
     private var mapRetry = 0
-    private val markerStations = HashMap<String, NearbyStation>()
+    private val markerStops = HashMap<String, RouteStop>()
+    private val labelTexts = ArrayList<Text>()
 
     private lateinit var root: FrameLayout
     private lateinit var topCard: MaterialCardView
@@ -107,6 +134,13 @@ class NearbyMapActivity : PageActivity() {
             return
         }
         selectedKey = savedInstanceState?.getString("selected_line").orEmpty()
+        if (selectedKey.isBlank() && intent.hasExtra(EXTRA_LINE_ID)) {
+            val lineId = intent.getStringExtra(EXTRA_LINE_ID).orEmpty()
+            val direction = intent.getIntExtra(EXTRA_DIRECTION, -1)
+            if (lineId.isNotBlank() && direction >= 0) {
+                selectedKey = "$lineId:$direction"
+            }
+        }
         buildMapUi(savedInstanceState)
         if (mapView != null) {
             rebuildRows()
@@ -353,9 +387,9 @@ class NearbyMapActivity : PageActivity() {
         m.uiSettings.setMyLocationButtonEnabled(false)
         m.uiSettings.setScaleControlsEnabled(false)
         m.setOnMarkerClickListener { marker ->
-            val station = markerStations[marker.id]
-            if (station != null) {
-                showStationLines(station)
+            val stop = markerStops[marker.id]
+            if (stop != null) {
+                showRouteStop(stop)
                 true
             } else {
                 false
@@ -419,7 +453,10 @@ class NearbyMapActivity : PageActivity() {
                 rows.isEmpty() -> "附近没有可显示的线路"
                 else -> ""
             }
-            rows.firstOrNull()?.let { loadRoute(it) }
+            rows.firstOrNull()?.let {
+                loadRoute(it)
+                loadLiveBus(it)
+            }
         } else {
             val cached = routeCache[selectedKey]
             if (cached != null) {
@@ -429,6 +466,7 @@ class NearbyMapActivity : PageActivity() {
             } else if (!routeLoading) {
                 loadRoute(current)
             }
+            loadLiveBus(current)
         }
         renderPanel()
         drawAll()
@@ -446,12 +484,18 @@ class NearbyMapActivity : PageActivity() {
         selectedRoute = routeCache[k]
         routePoints = selectedRoute?.points.orEmpty()
         routeStatus = selectedRoute?.let { "线路走向 · ${it.points.size} 个点" }.orEmpty()
+        liveBus = null
+        liveBusStatus = ""
+        liveBusLoading = false
+        labelsHidden = false
         if (selectedRoute == null) {
             loadRoute(row)
         } else {
             renderPanel()
             drawAll()
         }
+        loadLiveBus(row)
+        fitNearby(false)
     }
 
     private fun loadRoute(row: NearbyLineRow) {
@@ -499,43 +543,21 @@ class NearbyMapActivity : PageActivity() {
         val m = map ?: return
         if (!mapReady) return
         val d = data ?: return
+
+        labelTexts.forEach { runCatching { it.remove() } }
+        labelTexts.clear()
         m.clear()
-        markerStations.clear()
+        markerStops.clear()
 
-        m.addMarker(
-            MarkerOptions()
-                .position(LatLng(d.lat, d.lng))
-                .title(d.label)
-                .snippet("查询中心")
-                .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED))
-        )
-
-        d.stations.forEach { st ->
-            if (!valid(st.lat, st.lng)) return@forEach
-            val lineCount = d.linesByStation[st.sId].orEmpty().size
-            val marker = m.addMarker(
-                MarkerOptions()
-                    .position(gcj(st.lat, st.lng))
-                    .title(st.name)
-                    .snippet(
-                        buildString {
-                            if (st.distance >= 0) append("${st.distance}m · ")
-                            append("$lineCount 条线路")
-                        }
-                    )
-                    .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
-            ) ?: return@forEach
-            markerStations[marker.id] = st
-        }
-
-        val row = selectedRow()
-        if (row != null && valid(row.station.lat, row.station.lng)) {
+        // 我的位置：蓝色圆点 + 白圈，和站点/车辆图标明显区分。
+        if (valid(d.lat, d.lng)) {
             m.addMarker(
                 MarkerOptions()
-                    .position(gcj(row.station.lat, row.station.lng))
-                    .title("上车站 · ${row.station.name}")
-                    .snippet(row.line.title)
-                    .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_ORANGE))
+                    .position(LatLng(d.lat, d.lng))
+                    .title("我的位置")
+                    .snippet(d.label)
+                    .icon(myLocationIcon())
+                    .zIndex(10f)
             )
         }
 
@@ -558,23 +580,129 @@ class NearbyMapActivity : PageActivity() {
                     .zIndex(3f)
             )
         }
+
+        val row = selectedRow()
+        val targetOrder = row?.line?.order ?: 0
+        val stops = r?.stops.orEmpty()
+        if (stops.isNotEmpty()) {
+            stops.forEach { stop ->
+                if (!valid(stop.lat, stop.lng)) return@forEach
+                addStopMarker(
+                    m = m,
+                    stop = stop,
+                    target = targetOrder > 0 && stop.order == targetOrder
+                )
+            }
+        } else if (row != null && valid(row.station.lat, row.station.lng)) {
+            addStopMarker(
+                m = m,
+                stop = RouteStop(
+                    order = targetOrder.coerceAtLeast(1),
+                    sId = row.line.sId,
+                    name = row.station.name,
+                    lat = row.station.lat,
+                    lng = row.station.lng
+                ),
+                target = true
+            )
+        }
+
+        liveBus?.let { bus ->
+            if (!valid(bus.lat, bus.lng)) return@let
+            m.addMarker(
+                MarkerOptions()
+                    .position(LatLng(bus.lat, bus.lng))
+                    .title("最近公交")
+                    .snippet(bus.nextStation.ifBlank { "运行中" })
+                    .icon(busIcon())
+                    .zIndex(9f)
+            )
+        }
+        applyLabelVisibility()
+    }
+
+    /**
+     * 看全线时隐藏站名，避免几十个站名叠在一起；回到附近或切换线路时恢复。
+     */
+    private fun applyLabelVisibility() {
+        labelTexts.forEach { runCatching { it.isVisible = !labelsHidden } }
+    }
+
+    private fun addStopMarker(m: AMap, stop: RouteStop, target: Boolean) {
+        val pos = gcj(stop.lat, stop.lng)
+        val marker = m.addMarker(
+            MarkerOptions()
+                .position(pos)
+                .title(stop.name)
+                .snippet(if (target) "上车站" else "第 ${stop.order} 站")
+                .icon(
+                    BitmapDescriptorFactory.defaultMarker(
+                        if (target) BitmapDescriptorFactory.HUE_ORANGE
+                        else BitmapDescriptorFactory.HUE_AZURE
+                    )
+                )
+                .zIndex(if (target) 7f else 5f)
+        ) ?: return
+        markerStops[marker.id] = stop
+
+        val label = m.addText(
+            TextOptions()
+                .position(pos)
+                .text(stop.name)
+                .fontSize(dp(11))
+                .fontColor(0xFF1F2937.toInt())
+                .backgroundColor(0xE6FFFFFF.toInt())
+                .align(Text.ALIGN_CENTER_HORIZONTAL, Text.ALIGN_TOP)
+                .zIndex(6f)
+        )
+        label?.let { labelTexts += it }
+    }
+
+    private fun myLocationIcon(): BitmapDescriptor {
+        val size = dp(36).coerceAtLeast(dp(28))
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val cx = size / 2f
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = 0x332E7CF6
+        canvas.drawCircle(cx, cx, size / 2f, paint)
+        paint.color = Color.WHITE
+        canvas.drawCircle(cx, cx, size * 0.30f, paint)
+        paint.color = 0xFF2E7CF6.toInt()
+        canvas.drawCircle(cx, cx, size * 0.22f, paint)
+        paint.color = Color.WHITE
+        paint.textSize = size * 0.26f
+        paint.typeface = Typeface.DEFAULT_BOLD
+        paint.textAlign = Paint.Align.CENTER
+        val fm = paint.fontMetrics
+        canvas.drawText("我", cx, cx - (fm.ascent + fm.descent) / 2f, paint)
+        return BitmapDescriptorFactory.fromBitmap(bmp)
+    }
+
+    private fun busIcon(): BitmapDescriptor {
+        val size = dp(34).coerceAtLeast(dp(26))
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val cx = size / 2f
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = 0xFF1F9D55.toInt()
+        canvas.drawCircle(cx, cx, size / 2f, paint)
+        paint.color = Color.WHITE
+        paint.textSize = size * 0.44f
+        paint.typeface = Typeface.DEFAULT_BOLD
+        paint.textAlign = Paint.Align.CENTER
+        val fm = paint.fontMetrics
+        canvas.drawText("车", cx, cx - (fm.ascent + fm.descent) / 2f, paint)
+        return BitmapDescriptorFactory.fromBitmap(bmp)
     }
 
     private fun fitNearby(animate: Boolean) {
         val m = map ?: return
         val d = data ?: return
-        val points = ArrayList<LatLng>()
-        if (valid(d.lat, d.lng)) points += LatLng(d.lat, d.lng)
-        d.stations.filter { valid(it.lat, it.lng) }.forEach { points += gcj(it.lat, it.lng) }
-        if (points.isEmpty()) return
-        val update = when {
-            points.size == 1 -> CameraUpdateFactory.newLatLngZoom(points[0], 16f)
-            else -> {
-                val builder = LatLngBounds.Builder()
-                points.forEach { builder.include(it) }
-                CameraUpdateFactory.newLatLngBounds(builder.build(), dp(110))
-            }
-        }
+        if (!valid(d.lat, d.lng)) return
+        labelsHidden = false
+        applyLabelVisibility()
+        val update = CameraUpdateFactory.newLatLngZoom(LatLng(d.lat, d.lng), 16f)
         if (animate) m.animateCamera(update) else m.moveCamera(update)
     }
 
@@ -584,6 +712,8 @@ class NearbyMapActivity : PageActivity() {
             toast("这条线路还没有走向数据")
             return
         }
+        labelsHidden = true
+        applyLabelVisibility()
         val builder = LatLngBounds.Builder()
         routePoints.forEach { builder.include(gcj(it.lat, it.lng)) }
         m.animateCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), dp(70)))
@@ -620,6 +750,80 @@ class NearbyMapActivity : PageActivity() {
             }
             .show()
     }
+
+    private fun showRouteStop(stop: RouteStop) {
+        val nearby = data?.stations?.firstOrNull {
+            it.sId == stop.sId || it.name == stop.name
+        }
+        if (nearby != null && !data?.linesByStation?.get(nearby.sId).isNullOrEmpty()) {
+            showStationLines(nearby)
+            return
+        }
+        val row = selectedRow()
+        val message = buildString {
+            if (row != null) {
+                append("当前线路：").append(row.line.title)
+                if (row.line.towards.isNotBlank()) append(" · ").append(row.line.towards)
+                append("\n")
+            }
+            append("第 ").append(stop.order).append(" 站")
+        }
+        AlertDialog.Builder(this)
+            .setTitle(stop.name)
+            .setMessage(message)
+            .setPositiveButton("知道了", null)
+            .show()
+    }
+
+    private fun loadLiveBus(row: NearbyLineRow) {
+        val d = data ?: return
+        if (liveBusLoading) return
+        val k = key(row)
+        val id = ++liveBusRequest
+        liveBusLoading = true
+        liveBusStatus = "车辆位置加载中…"
+        renderPanel()
+
+        val city = d.cityId.ifBlank { prefs.cityId }
+        val lineId = row.line.lineId
+        liveExecutor.execute {
+            val result = runCatching {
+                BusApiClient.lineBuses(city, lineId, prefs.udid)
+            }
+            main.post {
+                if (id != liveBusRequest || selectedKey != k || isFinishing || isDestroyed) return@post
+                liveBusLoading = false
+                result.onSuccess { list ->
+                    val nearest = list.filter { valid(it.lat, it.lng) }
+                        .minByOrNull { distanceMeters(it.lat, it.lng, d.lat, d.lng) }
+                    liveBus = nearest
+                    liveBusStatus = if (nearest == null) {
+                        "当前没有运行车辆"
+                    } else {
+                        "最近公交 ${formatMeters(distanceMeters(nearest.lat, nearest.lng, d.lat, d.lng))}"
+                    }
+                    drawAll()
+                }.onFailure { e ->
+                    liveBus = null
+                    liveBusStatus = "车辆位置加载失败：${e.message ?: "未知错误"}"
+                }
+                renderPanel()
+            }
+        }
+    }
+
+    private fun distanceMeters(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
+        val r = 6_371_000.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLng = Math.toRadians(lng2 - lng1)
+        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+            kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
+            kotlin.math.sin(dLng / 2) * kotlin.math.sin(dLng / 2)
+        return 2 * r * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+    }
+
+    private fun formatMeters(m: Double): String =
+        if (m < 1000) "${m.toInt()}m" else String.format(Locale.getDefault(), "%.1fkm", m / 1000)
 
     // ------------------------------------------------------------ 订阅与刷新
 
@@ -706,8 +910,8 @@ class NearbyMapActivity : PageActivity() {
         } else {
             buildString {
                 append(d.label)
-                append(" · ")
-                append(d.stations.size).append(" 站 / ").append(rows.size).append(" 线")
+                selectedRoute?.let { append(" · ").append(it.stops.size).append(" 站") }
+                append(" · ").append(rows.size).append(" 线")
                 if (d.partial) append(" · 部分失败")
                 append(" · ").append(timeText(d.fetchedAt))
             }
@@ -729,7 +933,7 @@ class NearbyMapActivity : PageActivity() {
                 if (row.line.towards.isNotBlank()) append(" · ").append(row.line.towards)
                 append(" · ").append(row.line.etaText.ifBlank { "—" })
             }
-            subscribeButton.text = if (sub == null) "订阅线路" else "已订阅"
+            subscribeButton.text = if (sub == null) "订阅线路" else "取消订阅"
             subscribeButton.backgroundTintList = ColorStateList.valueOf(
                 if (sub == null) colorPrimary() else colorSurfaceVariant()
             )
@@ -779,15 +983,19 @@ class NearbyMapActivity : PageActivity() {
             }
         }
 
+        val statusParts = buildList {
+            if (routeStatus.isNotBlank()) add(routeStatus)
+            if (liveBusStatus.isNotBlank()) add(liveBusStatus)
+        }
         statusView.text = when {
             loading -> "刷新中…"
             routeLoading -> routeStatus
             lastStatus.isNotBlank() -> lastStatus
-            routeStatus.isNotBlank() -> routeStatus
-            else -> "点站点标记看经过线路；点线路条切换走向"
+            statusParts.isNotEmpty() -> statusParts.joinToString(" · ")
+            else -> "点站点标记看站名；点线路条切换走向"
         }
         lookAllButton.isEnabled = routePoints.size >= 2
-        backNearButton.isEnabled = d?.stations?.any { valid(it.lat, it.lng) } == true
+        backNearButton.isEnabled = d != null && valid(d.lat, d.lng)
     }
 
     // ------------------------------------------------------------ 生命周期
@@ -795,9 +1003,12 @@ class NearbyMapActivity : PageActivity() {
     override fun onResume() {
         super.onResume()
         mapView?.onResume()
+        main.removeCallbacks(liveTick)
+        main.postDelayed(liveTick, LIVE_REFRESH_MS)
     }
 
     override fun onPause() {
+        main.removeCallbacks(liveTick)
         mapView?.onPause()
         super.onPause()
     }
@@ -805,8 +1016,10 @@ class NearbyMapActivity : PageActivity() {
     override fun onDestroy() {
         mapLoadCheck?.let { main.removeCallbacks(it) }
         mapLoadCheck = null
+        main.removeCallbacks(liveTick)
         loader.close()
         routeExecutor.shutdownNow()
+        liveExecutor.shutdownNow()
         if (mapCreated) {
             runCatching { mapView?.onDestroy() }
         }

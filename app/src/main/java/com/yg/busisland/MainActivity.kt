@@ -1,7 +1,6 @@
 package com.yg.busisland
 
 import android.Manifest
-import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
@@ -289,30 +288,46 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
         }
         val pinned = rows.filter { it.subscription != null }
         val nearby = rows.filter { it.subscription == null }
+        val pinnedByKey = pinned.associateBy { it.line.lineId to it.line.direction }
+        val mine = prefs.lines.distinctBy { it.lineId to it.direction }
+        var missingCount = 0
 
-        if (pinned.isNotEmpty()) {
+        if (mine.isNotEmpty()) {
             page.section("我的线路")
             val card = page.card()
-            pinned.forEach { row ->
-                NearbyLineRowView.add(
-                    card, row.line, row.station.name, row.station.distance, true
-                ) { toggle(row) }
-            }
-        }
-
-        val shownKeys = pinned.map { it.line.lineId to it.line.direction }.toSet()
-        val missing = prefs.lines
-            .distinctBy { it.lineId to it.direction }
-            .filter { (it.lineId to it.direction) !in shownKeys }
-        if (d != null && missing.isNotEmpty()) {
-            page.section("我的订阅")
-            val card = page.card()
-            missing.forEach { sub ->
-                ListRow.add(card, "★", sub.title, sub.stationName.ifBlank { "附近未发现" }) {
-                    startActivity(Intent(this, LinesActivity::class.java))
+            mine.forEach { sub ->
+                val row = pinnedByKey[sub.lineId to sub.direction]
+                if (row != null) {
+                    NearbyLineRowView.add(
+                        card, row.line, row.station.name, row.station.distance, true
+                    ) {
+                        LineDetailSheet.show(
+                            this,
+                            LineDetailTarget.from(row, d?.cityId.orEmpty())
+                        ) { render() }
+                    }
+                } else {
+                    missingCount++
+                    val label = when {
+                        d == null && loading -> "正在查附近…"
+                        d == null -> "附近数据不可用"
+                        sub.stationName.isBlank() -> "附近未发现"
+                        else -> "附近未发现 · ${sub.stationName}"
+                    }
+                    val value = ListRow.add(card, "★", sub.title, label) {
+                        LineDetailSheet.show(this, LineDetailTarget.from(sub)) { render() }
+                    }
+                    value.setTextColor(
+                        attrColor(com.google.android.material.R.attr.colorOnSurfaceVariant)
+                    )
                 }
             }
-            page.hint("这些线路不在附近；点线路可管理订阅。")
+            if (missingCount > 0) {
+                page.hint(
+                    if (d == null) "订阅已保留；附近数据恢复后会显示到站时间。"
+                    else "「附近未发现」表示该方向当前不在附近；点进去可管理订阅。"
+                )
+            }
         }
 
         if (nearby.isNotEmpty()) {
@@ -321,7 +336,12 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
             nearby.forEach { row ->
                 NearbyLineRowView.add(
                     card, row.line, row.station.name, row.station.distance, false
-                ) { subscribe(row) }
+                ) {
+                    LineDetailSheet.show(
+                        this,
+                        LineDetailTarget.from(row, d?.cityId.orEmpty())
+                    ) { render() }
+                }
             }
         } else if (d != null && d.stations.isEmpty()) {
             page.section("附近线路")
@@ -348,7 +368,7 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
         }
 
         renderActions()
-        page.hint("按到站时间排序；点线路可订阅/取消。订阅只看线路 + 方向，不绑地点。")
+        page.hint("点线路查看详情；订阅在详情页里确认。订阅只看线路 + 方向，不绑地点。")
     }
 
     private fun renderStatus() {
@@ -467,47 +487,6 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
         ListRow.add(card, "⚙️", "设置") {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
-    }
-
-    // ------------------------------------------------------------ 订阅
-
-    private fun subscribe(row: NearbyLineRow) {
-        val d = data ?: return
-        val line = row.line
-        val station = row.station
-        val sub = LineSub(
-            cityId = d.cityId,
-            lineId = line.lineId,
-            lineName = line.lineName,
-            lineNo = line.lineNo,
-            direction = line.direction,
-            targetOrder = line.order.coerceAtLeast(1),
-            stationName = line.stationName.ifBlank { station.name },
-            stationId = line.sId.ifBlank { station.sId },
-            place = "",
-            startSn = line.startSn,
-            endSn = line.endSn
-        )
-        if (prefs.addLine(sub)) {
-            toast("已订阅，已置顶")
-        } else {
-            toast("已订阅")
-        }
-        render()
-    }
-
-    private fun toggle(row: NearbyLineRow) {
-        val sub = row.subscription ?: return
-        AlertDialog.Builder(this)
-            .setTitle("${sub.title} · ${row.station.name}")
-            .setMessage("取消订阅这条线路？")
-            .setPositiveButton("取消订阅") { _, _ ->
-                prefs.removeLine(sub.lineId, sub.direction)
-                render()
-                toast("已取消订阅")
-            }
-            .setNegativeButton("保留", null)
-            .show()
     }
 
     // ------------------------------------------------------------ 小工具

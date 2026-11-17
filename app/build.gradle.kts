@@ -23,8 +23,8 @@ android {
         applicationId = "com.yg.busisland"
         minSdk = 26
         targetSdk = 33
-        versionCode = 6
-        versionName = "1.3.0"
+        versionCode = 9
+        versionName = "1.4.2"
         manifestPlaceholders["amapKey"] = amapKey
         buildConfigField("String", "AMAP_KEY", "\"$amapKey\"")
     }

@@ -1,7 +1,6 @@
 package com.yg.busisland
 
 import android.Manifest
-import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
@@ -198,7 +197,12 @@ class NearbyLinesActivity : PageActivity() {
             pinned.forEach { row ->
                 NearbyLineRowView.add(
                     card, row.line, row.station.name, row.station.distance, true
-                ) { toggle(row) }
+                ) {
+                    LineDetailSheet.show(
+                        this,
+                        LineDetailTarget.from(row, d?.cityId.orEmpty())
+                    ) { render() }
+                }
             }
         }
 
@@ -208,7 +212,12 @@ class NearbyLinesActivity : PageActivity() {
             nearby.forEach { row ->
                 NearbyLineRowView.add(
                     card, row.line, row.station.name, row.station.distance, false
-                ) { subscribe(row) }
+                ) {
+                    LineDetailSheet.show(
+                        this,
+                        LineDetailTarget.from(row, d?.cityId.orEmpty())
+                    ) { render() }
+                }
             }
         } else if (d != null && d.stations.isEmpty()) {
             page.section("附近线路")
@@ -226,7 +235,7 @@ class NearbyLinesActivity : PageActivity() {
             }
         }
 
-        page.hint("点线路直接订阅，再点一次取消；订阅会置顶到首页。")
+        page.hint("点线路查看详情；订阅或取消都在详情页里完成。")
     }
 
     private fun renderStatus() {
@@ -310,41 +319,6 @@ class NearbyLinesActivity : PageActivity() {
                 }
             }
         }
-    }
-
-    private fun subscribe(row: NearbyLineRow) {
-        val d = data ?: return
-        val line = row.line
-        val station = row.station
-        val sub = LineSub(
-            cityId = d.cityId,
-            lineId = line.lineId,
-            lineName = line.lineName,
-            lineNo = line.lineNo,
-            direction = line.direction,
-            targetOrder = line.order.coerceAtLeast(1),
-            stationName = line.stationName.ifBlank { station.name },
-            stationId = line.sId.ifBlank { station.sId },
-            place = "",
-            startSn = line.startSn,
-            endSn = line.endSn
-        )
-        toast(if (prefs.addLine(sub)) "已订阅，已置顶" else "已订阅")
-        render()
-    }
-
-    private fun toggle(row: NearbyLineRow) {
-        val sub = row.subscription ?: return
-        AlertDialog.Builder(this)
-            .setTitle("${sub.title} · ${row.station.name}")
-            .setMessage("取消订阅这条线路？")
-            .setPositiveButton("取消订阅") { _, _ ->
-                prefs.removeLine(sub.lineId, sub.direction)
-                render()
-                toast("已取消订阅")
-            }
-            .setNegativeButton("保留", null)
-            .show()
     }
 
     private fun statusText(d: NearbyData): String {

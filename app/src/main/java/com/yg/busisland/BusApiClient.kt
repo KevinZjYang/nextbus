@@ -385,6 +385,36 @@ object BusApiClient {
     }
 
     /**
+     * 线路详情里的全部在线车辆。buses[].lat/lng 已是 GCJ-02，
+     * 可直接画在高德地图上；运营时间外返回空列表。
+     */
+    fun lineBuses(cityId: String, lineId: String, udid: String): List<BusPosition> {
+        val p = common(cityId, udid)
+        p["localCityId"] = cityId
+        p["lineId"] = lineId
+        val body = httpGet(cryptoUrl("/bus/line!encryptedLineDetail.action", p))
+        val jr = parseEnvelope(body)
+        val arr = jr.optJSONObject("data")?.optJSONArray("buses") ?: return emptyList()
+        val out = mutableListOf<BusPosition>()
+        for (i in 0 until arr.length()) {
+            val b = arr.optJSONObject(i) ?: continue
+            val lat = b.optDouble("lat", 0.0)
+            val lng = b.optDouble("lng", 0.0)
+            if (!lat.isFinite() || !lng.isFinite() || lat == 0.0 || lng == 0.0) continue
+            out += BusPosition(
+                busId = b.optString("busId"),
+                order = b.optInt("order", 0),
+                lat = lat,
+                lng = lng,
+                speed = b.optDouble("speed", 0.0),
+                nextStation = b.optString("nextStationName"),
+                distance = b.optInt("distanceToWaitStn", -1)
+            )
+        }
+        return out
+    }
+
+    /**
      * 到站文案统一成「时间」：接口给距离（米/公里）时按 15km/h 折算成分钟，
      * 岛上不出现「距站 800m」「1.2 公里」这类数值。
      */

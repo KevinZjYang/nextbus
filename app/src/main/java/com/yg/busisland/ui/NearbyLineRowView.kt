@@ -82,6 +82,12 @@ object NearbyLineRowView {
             )
             setPadding(ctx.dp(10), 0, 0, 0)
         })
+        row.addView(TextView(ctx).apply {
+            text = "›"
+            textSize = 20f
+            setTextColor(ctx.colorOnSurfaceVariant())
+            setPadding(ctx.dp(6), 0, 0, 0)
+        })
         parent.addView(row)
         parent.addView(View(ctx).apply { setBackgroundColor(0x0F000000) },
             LinearLayout.LayoutParams(-1, ctx.dp(1)).apply {

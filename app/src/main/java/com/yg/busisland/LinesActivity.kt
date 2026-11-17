@@ -51,23 +51,12 @@ class LinesActivity : com.yg.busisland.ui.PageActivity() {
                     append(" · 旧地点 ").append(legacyPlace)
                 }
             }
-            ListRow.add(card, "★", line.title, subtitle) { remove(line) }
+            ListRow.add(card, "★", line.title, subtitle) {
+                LineDetailSheet.show(this, LineDetailTarget.from(line)) { render() }
+            }
         }
         page.button("＋ 添加线路") { addLine() }
-        page.hint("点线路可取消订阅；首页和附近页点线路即可一键置顶。")
-    }
-
-    private fun remove(line: LineSub) {
-        AlertDialog.Builder(this)
-            .setTitle("${line.title} · ${line.stationName.ifBlank { "上车站" }}")
-            .setMessage("取消订阅这条线路？")
-            .setPositiveButton("取消订阅") { _, _ ->
-                prefs.removeLine(line.lineId, line.direction)
-                render()
-                toast("已取消订阅")
-            }
-            .setNegativeButton("保留", null)
-            .show()
+        page.hint("点线路查看详情；取消订阅在详情页里完成。")
     }
 
     private fun addLine() {

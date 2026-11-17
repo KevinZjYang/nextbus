@@ -172,6 +172,17 @@ data class BusItem(    val busId: String,
     val etaText: String
 )
 
+/** 线路上正在运行的车辆（encryptedLineDetail 的 buses[]，坐标为 GCJ-02）。 */
+data class BusPosition(
+    val busId: String,
+    val order: Int,
+    val lat: Double,
+    val lng: Double,
+    val speed: Double,
+    val nextStation: String,
+    val distance: Int
+)
+
 data class RealTimeResult(
     val lineDesc: String,
     val preArrival: String,
