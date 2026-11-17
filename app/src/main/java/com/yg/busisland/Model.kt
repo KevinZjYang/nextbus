@@ -2,7 +2,6 @@ package com.yg.busisland
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.Calendar
 
 data class Place(
     val id: String = "",
@@ -79,7 +78,7 @@ data class StationLine(
     }
 }
 
-/** 一条订阅线路（含目标站与所属场景） */
+/** 一条订阅线路（含目标站；地点字段仅为兼容旧数据保留） */
 data class LineSub(
     val cityId: String,
     val lineId: String,
@@ -89,7 +88,7 @@ data class LineSub(
     val targetOrder: Int,
     val stationName: String,
     val stationId: String,
-    val place: String, // 地点 id
+    val place: String = "", // 旧版地点 id，可为空
     val startSn: String = "",
     val endSn: String = ""
 ) {
@@ -130,7 +129,7 @@ data class LineSub(
             targetOrder = o.optInt("targetOrder", 0),
             stationName = o.optString("stationName"),
             stationId = o.optString("stationId"),
-            place = o.optString("place", "home"),
+            place = o.optString("place", ""),
             startSn = o.optString("startSn"),
             endSn = o.optString("endSn")
         )
@@ -149,52 +148,6 @@ data class LineSub(
             val arr = JSONArray()
             list.forEach { arr.put(it.toJson()) }
             return arr.toString()
-        }
-    }
-}
-
-/** 通勤时段（支持跨天，end < start 时视为跨零点） */
-data class Schedule(
-    val morningStart: Int = 7 * 60,
-    val morningEnd: Int = 9 * 60 + 30,
-    val eveningStart: Int = 17 * 60,
-    val eveningEnd: Int = 19 * 60 + 30,
-    val weekdays: Int = 0b0011111 // 周一~周五，bit0=周一
-) {
-    fun activeAt(cal: Calendar): Boolean {
-        val dow = cal.get(Calendar.DAY_OF_WEEK) // 1=周日
-        val bit = when (dow) {
-            Calendar.MONDAY -> 0
-            Calendar.TUESDAY -> 1
-            Calendar.WEDNESDAY -> 2
-            Calendar.THURSDAY -> 3
-            Calendar.FRIDAY -> 4
-            Calendar.SATURDAY -> 5
-            else -> 6
-        }
-        if (weekdays and (1 shl bit) == 0) return false
-        val m = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
-        return inRange(m, morningStart, morningEnd) || inRange(m, eveningStart, eveningEnd)
-    }
-
-    private fun inRange(v: Int, start: Int, end: Int): Boolean =
-        if (start <= end) v in start..end else (v >= start || v <= end)
-
-    fun toJson(): JSONObject = JSONObject()
-        .put("ms", morningStart).put("me", morningEnd)
-        .put("es", eveningStart).put("ee", eveningEnd)
-        .put("wd", weekdays)
-
-    companion object {
-        fun fromJson(o: JSONObject?): Schedule {
-            if (o == null) return Schedule()
-            return Schedule(
-                o.optInt("ms", 7 * 60),
-                o.optInt("me", 9 * 60 + 30),
-                o.optInt("es", 17 * 60),
-                o.optInt("ee", 19 * 60 + 30),
-                o.optInt("wd", 0b0011111)
-            )
         }
     }
 }

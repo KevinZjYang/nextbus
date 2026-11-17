@@ -24,8 +24,8 @@ class AboutActivity : com.yg.busisland.ui.PageActivity() {
 
         page.section("说明")
         val infoCard = page.card()
-        ListRow.add(infoCard, "🏝", "超级岛", "媒体卡片通道（免授权）", chevron = false)
-        ListRow.add(infoCard, "🔔", "到站提醒", "铃声跟随系统通知管理", chevron = false)
+        ListRow.add(infoCard, "🚏", "查询方式", "打开应用时前台查附近公交", chevron = false)
+        ListRow.add(infoCard, "★", "订阅", "按线路 + 方向置顶，不绑地点", chevron = false)
         ListRow.add(infoCard, "📄", "接口协议", "docs/protocol.md", chevron = false)
 
         page.section("源码")

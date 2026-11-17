@@ -23,8 +23,8 @@ android {
         applicationId = "com.yg.busisland"
         minSdk = 26
         targetSdk = 33
-        versionCode = 4
-        versionName = "1.1.1"
+        versionCode = 6
+        versionName = "1.3.0"
         manifestPlaceholders["amapKey"] = amapKey
         buildConfigField("String", "AMAP_KEY", "\"$amapKey\"")
     }
@@ -72,5 +72,8 @@ android {
 dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.9.0")
-    implementation("com.amap.api:location:11.3.101")
+    // 3dmap 已内置定位类，不能再单独引 location，否则会重复。
+    implementation("com.amap.api:3dmap:10.0.600")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

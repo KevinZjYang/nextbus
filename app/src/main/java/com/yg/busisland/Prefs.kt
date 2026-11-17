@@ -11,86 +11,9 @@ class Prefs(ctx: Context) {
     private val sp: SharedPreferences =
         ctx.applicationContext.getSharedPreferences("bus_island", Context.MODE_PRIVATE)
 
-    var enabled: Boolean
-        get() = sp.getBoolean("enabled", false)
-        set(v) = sp.edit().putBoolean("enabled", v).apply()
-
     var askedPermissions: Boolean
         get() = sp.getBoolean("asked_perm", false)
         set(v) = sp.edit().putBoolean("asked_perm", v).apply()
-
-    var radius: Int
-        get() = sp.getInt("radius", 800)
-        set(v) = sp.edit().putInt("radius", v).apply()
-
-    var intervalSec: Int
-        get() = sp.getInt("interval", 45)
-        set(v) = sp.edit().putInt("interval", v).apply()
-
-    var islandEnabled: Boolean
-        get() = sp.getBoolean("island", true)
-        set(v) = sp.edit().putBoolean("island", v).apply()
-
-    /** true=媒体通知上岛（兼容模式），false=miui.focus.param */
-    /** 调试：忽略通勤时段/围栏，用来随时看岛 */
-    var debugMode: Boolean
-        get() = sp.getBoolean("debug_mode", false)
-        set(v) = sp.edit().putBoolean("debug_mode", v).apply()
-
-
-    /** 到站提醒：剩余 N 分钟时弹通知 */
-    var remindEnabled: Boolean
-        get() = sp.getBoolean("remind_enabled", true)
-        set(v) = sp.edit().putBoolean("remind_enabled", v).apply()
-
-    /** 自选提示音（content:// 或 file://），空 = 系统默认通知音 */
-    var remindSoundUri: String
-        get() = sp.getString("remind_sound_uri", "") ?: ""
-        set(v) = sp.edit().putString("remind_sound_uri", v).apply()
-
-    /** 岛出现时是否响一声 */
-    var islandSound: Boolean
-        get() = sp.getBoolean("island_sound", true)
-        set(v) = sp.edit().putBoolean("island_sound", v).apply()
-
-    /** 到站提醒是否响铃 */
-    var remindSound: Boolean
-        get() = sp.getBoolean("remind_sound", true)
-        set(v) = sp.edit().putBoolean("remind_sound", v).apply()
-
-    var remindMinutes: Int
-        get() = sp.getInt("remind_minutes", 3)
-        set(v) = sp.edit().putInt("remind_minutes", v).apply()
-
-    var lastRemindKey: String
-        get() = sp.getString("last_remind_key", "") ?: ""
-        set(v) = sp.edit().putString("last_remind_key", v).apply()
-
-    var lastRemindAt: Long
-        get() = sp.getLong("last_remind_at", 0L)
-        set(v) = sp.edit().putLong("last_remind_at", v).apply()
-
-    /** 临时查询截止时间：此时间之前忽略时段/围栏，直接出岛 */
-    var adhocUntil: Long
-        get() = sp.getLong("adhoc_until", 0L)
-        set(v) = sp.edit().putLong("adhoc_until", v).apply()
-
-    // 上一次成功结果（失败时兜底显示）
-    var lastOkAt: Long
-        get() = sp.getLong("last_ok_at", 0L)
-        set(v) = sp.edit().putLong("last_ok_at", v).apply()
-
-    var lastOkTitle: String
-        get() = sp.getString("last_ok_title", "") ?: ""
-        set(v) = sp.edit().putString("last_ok_title", v).apply()
-
-    var lastOkEta: String
-        get() = sp.getString("last_ok_eta", "") ?: ""
-        set(v) = sp.edit().putString("last_ok_eta", v).apply()
-
-    var lastOkContent: String
-        get() = sp.getString("last_ok_content", "") ?: ""
-        set(v) = sp.edit().putString("last_ok_content", v).apply()
 
     var udid: String
         get() {
@@ -101,14 +24,6 @@ class Prefs(ctx: Context) {
             return gen
         }
         set(v) = sp.edit().putString("udid", v).apply()
-
-    var home: Place?
-        get() = Place.fromJson(readJson("home"))
-        set(v) = writeJson("home", v?.toJson())
-
-    var company: Place?
-        get() = Place.fromJson(readJson("company"))
-        set(v) = writeJson("company", v?.toJson())
 
     // ---------------- 常去地点（家/公司/学校…）
 
@@ -125,9 +40,9 @@ class Prefs(ctx: Context) {
         places = list
     }
 
+    /** 只删地点；订阅不再绑定地点，不能跟着删。 */
     fun removePlace(id: String) {
         places = places.filterNot { it.id == id }
-        lines = lines.filterNot { it.place == id }.toMutableList()
     }
 
     fun newPlaceId(): String = "p" + System.currentTimeMillis().toString(36)
@@ -143,7 +58,8 @@ class Prefs(ctx: Context) {
         }
         addOne("home", home, homeCity)
         addOne("company", company, companyCity)
-        sp.edit().putString("places", placesToJson(merged)).putBoolean("places_migrated", true).apply()
+        sp.edit().putString("places", placesToJson(merged))
+            .putBoolean("places_migrated", true).apply()
     }
 
     private fun parsePlaces(raw: String): List<Place> {
@@ -160,6 +76,14 @@ class Prefs(ctx: Context) {
         return arr.toString()
     }
 
+    var home: Place?
+        get() = Place.fromJson(readJson("home"))
+        set(v) = writeJson("home", v?.toJson())
+
+    var company: Place?
+        get() = Place.fromJson(readJson("company"))
+        set(v) = writeJson("company", v?.toJson())
+
     var homeCity: String
         get() = sp.getString("home_city", "") ?: ""
         set(v) = sp.edit().putString("home_city", v).apply()
@@ -168,7 +92,7 @@ class Prefs(ctx: Context) {
         get() = sp.getString("company_city", "") ?: ""
         set(v) = sp.edit().putString("company_city", v).apply()
 
-    // 当前城市（搜索、线路都用它）
+    // 当前城市（搜索、线路都用它；有定位时会被自动识别覆盖）
     var cityId: String
         get() = sp.getString("city_id", "") ?: ""
         set(v) = sp.edit().putString("city_id", v).apply()
@@ -185,13 +109,45 @@ class Prefs(ctx: Context) {
         get() = sp.getFloat("city_lng", 0f).toDouble()
         set(v) = sp.edit().putFloat("city_lng", v.toFloat()).apply()
 
-    var schedule: Schedule
-        get() = Schedule.fromJson(readJson("schedule"))
-        set(v) = writeJson("schedule", v.toJson())
+    fun saveCity(c: CityInfo) {
+        cityId = c.id
+        cityName = c.name
+        cityLat = c.lat
+        cityLng = c.lng
+    }
+
+    // ---------------- 订阅（按线路 + 方向，不绑地点）
 
     var lines: MutableList<LineSub>
         get() = LineSub.listFromJson(sp.getString("lines", null))
         set(v) = sp.edit().putString("lines", LineSub.listToJson(v)).apply()
+
+    /** 已存在同一线路同一方向时返回 false。 */
+    fun addLine(sub: LineSub): Boolean {
+        val list = lines
+        if (list.any { it.lineId == sub.lineId && it.direction == sub.direction }) return false
+        list.add(sub)
+        lines = list
+        return true
+    }
+
+    fun removeLine(lineId: String, direction: Int) {
+        lines = lines.filterNot {
+            it.lineId == lineId && it.direction == direction
+        }.toMutableList()
+    }
+
+    fun isSubscribed(lineId: String, direction: Int): Boolean =
+        lines.any { it.lineId == lineId && it.direction == direction }
+
+    /** 老版本可能同一线路绑了多个地点，升级时压成一条。 */
+    fun dedupeLinesOnce() {
+        if (sp.getBoolean("lines_deduped_v2", false)) return
+        val seen = HashSet<Pair<String, Int>>()
+        val deduped = lines.filter { seen.add(it.lineId to it.direction) }
+        lines = deduped.toMutableList()
+        sp.edit().putBoolean("lines_deduped_v2", true).apply()
+    }
 
     var lastStatus: String
         get() = sp.getString("last_status", "") ?: ""
@@ -211,6 +167,8 @@ class Prefs(ctx: Context) {
     }
 
     private fun writeJson(key: String, o: JSONObject?) {
-        sp.edit().apply { if (o == null) remove(key) else putString(key, o.toString()) }.apply()
+        sp.edit().apply {
+            if (o == null) remove(key) else putString(key, o.toString())
+        }.apply()
     }
 }

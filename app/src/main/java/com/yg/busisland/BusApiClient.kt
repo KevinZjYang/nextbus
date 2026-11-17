@@ -194,12 +194,24 @@ object BusApiClient {
             .filter { it.optDouble("lat", 0.0) != 0.0 && it.optDouble("lng", 0.0) != 0.0 }
     }
 
-    fun routeStations(cityId: String, lineId: String, lineName: String, udid: String): JSONArray {        val p = common(cityId, udid)
+    fun routeStations(cityId: String, lineId: String, lineName: String, udid: String): JSONArray =
+        lineRouteData(cityId, lineId, lineName, udid).optJSONArray("stations") ?: JSONArray()
+
+    /** 线路走向：stops 来自 stations[]，画线点优先 route[]。 */
+    fun lineRoute(cityId: String, lineId: String, lineName: String, udid: String): LineRoute =
+        LineRouteParser.parse(lineRouteData(cityId, lineId, lineName, udid))
+
+    private fun lineRouteData(
+        cityId: String,
+        lineId: String,
+        lineName: String,
+        udid: String
+    ): JSONObject {
+        val p = common(cityId, udid)
         p["lineId"] = lineId
         p["lineName"] = lineName
         val body = httpGet("https://$HOST/bus/line!lineRoute.action?" + inflate(p))
-        val jr = parseEnvelope(body)
-        return jr.optJSONObject("data")?.optJSONArray("stations") ?: JSONArray()
+        return parseEnvelope(body).optJSONObject("data") ?: JSONObject()
     }
 
     private val LOC_KEY = "5A3FC1D0BB4DFFE2D18BF10363BCE72C".toByteArray(Charsets.US_ASCII)

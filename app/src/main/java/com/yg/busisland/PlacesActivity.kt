@@ -8,7 +8,7 @@ import android.widget.Toast
 import com.yg.busisland.ui.ListRow
 import com.yg.busisland.ui.PageScaffold
 
-/** 地点：家、公司、学校…每个地点绑定若干线路 */
+/** 地点：只用于快速定位附近公交，不绑定订阅。 */
 class PlacesActivity : com.yg.busisland.ui.PageActivity() {
 
     private lateinit var prefs: Prefs
@@ -17,9 +17,12 @@ class PlacesActivity : com.yg.busisland.ui.PageActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
-        page = PageScaffold(this, "地点", "通勤监控按最近的地点查车", showBack = true, onBack = { finish() })
-        render()
+        page = PageScaffold(
+            this, "地点", "快速定位用，不绑定订阅",
+            showBack = true, onBack = { finish() }
+        )
         setContentView(page.root)
+        render()
     }
 
     override fun onResume() {
@@ -42,30 +45,37 @@ class PlacesActivity : com.yg.busisland.ui.PageActivity() {
                 "company" -> "🏢"
                 else -> "📍"
             }
-            val count = prefs.lines.count { it.place == p.id }
-            val parts = mutableListOf(if (p.valid) "已设点" else "未设坐标")
-            if (count > 0) parts.add("$count 条线路")
-            ListRow.add(card, emoji, p.name.ifBlank { "地点" }, parts.joinToString(" · ")) {
-                menu(p)
+            val value = buildString {
+                if (p.valid) {
+                    append("%.5f, %.5f".format(p.lat, p.lng))
+                } else {
+                    append("未设坐标")
+                }
+                if (p.cityId.isNotBlank()) append(" · ").append(p.cityId)
             }
+            ListRow.add(card, emoji, p.name.ifBlank { "地点" }, value) { menu(p) }
         }
 
         page.button("＋ 添加地点") { addPlace() }
-        page.hint("地点用于绑定线路；通勤监控会在离最近地点足够近时开始查询。")
+        page.hint("地点只用于快速定位；订阅按线路 + 方向置顶，不绑地点。")
     }
 
     private fun menu(p: Place) {
-        val items = arrayOf("重新选点", "重命名", "删除地点")
+        val items = arrayOf("查看附近公交", "重新选点", "重命名", "删除地点")
         AlertDialog.Builder(this)
             .setTitle(p.name.ifBlank { "地点" })
-            .setItems(items) { _, i ->
-                when (i) {
-                    0 -> pick(p.id)
-                    1 -> rename(p)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> startActivity(
+                        Intent(this, NearbyLinesActivity::class.java)
+                            .putExtra(NearbyLinesActivity.EXTRA_PLACE_ID, p.id)
+                    )
+                    1 -> pick(p.id)
+                    2 -> rename(p)
                     else -> {
                         prefs.removePlace(p.id)
                         render()
-                        toast("已删除")
+                        toast("已删除地点，订阅不受影响")
                     }
                 }
             }

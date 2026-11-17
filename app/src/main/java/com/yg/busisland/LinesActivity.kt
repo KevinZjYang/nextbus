@@ -10,7 +10,7 @@ import com.yg.busisland.ui.ListRow
 import com.yg.busisland.ui.PageScaffold
 import org.json.JSONObject
 
-/** 订阅线路：每条线路绑定到一个地点 + 一个上车点 */
+/** 订阅线路：按线路 + 方向管理，不再绑定地点。 */
 class LinesActivity : com.yg.busisland.ui.PageActivity() {
 
     private lateinit var prefs: Prefs
@@ -19,9 +19,13 @@ class LinesActivity : com.yg.busisland.ui.PageActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
-        page = PageScaffold(this, "订阅线路", "线路绑定地点，上车点决定到站时间", showBack = true, onBack = { finish() })
-        render()
+        prefs.dedupeLinesOnce()
+        page = PageScaffold(
+            this, "订阅线路", "按线路 + 方向置顶，不绑地点",
+            showBack = true, onBack = { finish() }
+        )
         setContentView(page.root)
+        render()
     }
 
     override fun onResume() {
@@ -31,73 +35,62 @@ class LinesActivity : com.yg.busisland.ui.PageActivity() {
 
     private fun render() {
         page.clearBody()
-        val lines = prefs.lines
+        val lines = prefs.lines.distinctBy { it.lineId to it.direction }
         page.section("已订阅 ${lines.size} 条")
         val card = page.card()
         if (lines.isEmpty()) {
-            ListRow.add(card, "🚌", "还没有订阅线路", "点下面添加", chevron = false)
+            ListRow.add(card, "🚌", "还没有订阅线路", "去附近公交或按线路号添加", chevron = false)
         }
-        for (l in lines) {
-            val placeName = prefs.placeById(l.place)?.name ?: "未绑定"
-            val sub = buildString {
-                append(l.stationName)
-                append(" · ").append(placeName)
+        for (line in lines) {
+            val legacyPlace = prefs.placeById(line.place)?.name
+            val subtitle = buildString {
+                append(line.stationName.ifBlank { "上车站未设置" })
+                append(" · ")
+                append(if (line.endSn.isNotBlank()) "往 ${line.endSn}" else "方向 ${line.direction}")
+                if (!legacyPlace.isNullOrBlank()) {
+                    append(" · 旧地点 ").append(legacyPlace)
+                }
             }
-            ListRow.add(card, "🚌", l.title, sub) { remove(l) }
+            ListRow.add(card, "★", line.title, subtitle) { remove(line) }
         }
         page.button("＋ 添加线路") { addLine() }
-        page.hint("点击线路可删除；新增时优先用「附近站点」，会带上实时到站时间。")
+        page.hint("点线路可取消订阅；首页和附近页点线路即可一键置顶。")
     }
 
-    private fun remove(l: LineSub) {
+    private fun remove(line: LineSub) {
         AlertDialog.Builder(this)
-            .setTitle("${l.title} · ${l.stationName}")
-            .setMessage("删除这条订阅？")
-            .setPositiveButton("删除") { _, _ ->
-                prefs.lines = prefs.lines.filterNot {
-                    it.lineId == l.lineId && it.stationId == l.stationId && it.place == l.place
-                }.toMutableList()
+            .setTitle("${line.title} · ${line.stationName.ifBlank { "上车站" }}")
+            .setMessage("取消订阅这条线路？")
+            .setPositiveButton("取消订阅") { _, _ ->
+                prefs.removeLine(line.lineId, line.direction)
                 render()
+                toast("已取消订阅")
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton("保留", null)
             .show()
     }
 
     private fun addLine() {
-        val places = prefs.places.filter { it.valid }
-        if (places.isEmpty()) {
-            toast("先添加地点并选点")
-            startActivity(Intent(this, PlacesActivity::class.java))
-            return
-        }
         AlertDialog.Builder(this)
-            .setTitle("线路绑定到")
-            .setItems(places.map { it.name.ifBlank { "地点" } }.toTypedArray()) { _, i ->
-                val place = places[i]
-                AlertDialog.Builder(this)
-                    .setTitle("「${place.name.ifBlank { "地点" }}」添加线路")
-                    .setItems(arrayOf("看附近站点（推荐）", "按线路号搜索")) { _, j ->
-                        if (j == 0) {
-                            startActivity(
-                                Intent(this, NearbyLinesActivity::class.java)
-                                    .putExtra(NearbyLinesActivity.EXTRA_PLACE_ID, place.id)
-                            )
-                        } else {
-                            searchLine(place.id)
-                        }
-                    }
-                    .setNegativeButton("取消", null)
-                    .show()
+            .setTitle("添加线路")
+            .setItems(arrayOf("看附近站点（当前位置）", "按线路号搜索")) { _, which ->
+                if (which == 0) {
+                    startActivity(
+                        Intent(this, NearbyLinesActivity::class.java)
+                            .putExtra(NearbyLinesActivity.EXTRA_USE_CURRENT, true)
+                    )
+                } else {
+                    searchLine()
+                }
             }
             .setNegativeButton("取消", null)
             .show()
     }
 
-    private fun searchLine(place: String) {
+    private fun searchLine() {
         val cid = prefs.cityId
         if (cid.isBlank()) {
-            toast("先确定城市")
-            startActivity(Intent(this, MonitorActivity::class.java))
+            CityPicker.show(this, prefs) { searchLine() }
             return
         }
         val box = LinearLayout(this).apply {
@@ -116,7 +109,7 @@ class LinesActivity : com.yg.busisland.ui.PageActivity() {
                 Thread {
                     val r = runCatching { BusApiClient.search(cid, k, prefs.udid) }
                     runOnUiThread {
-                        r.onSuccess { pickLine(cid, place, it) }
+                        r.onSuccess { pickLine(cid, it) }
                             .onFailure { toast("搜索失败：${it.message}") }
                     }
                 }.start()
@@ -125,7 +118,7 @@ class LinesActivity : com.yg.busisland.ui.PageActivity() {
             .show()
     }
 
-    private fun pickLine(cityId: String, place: String, lines: List<JSONObject>) {
+    private fun pickLine(cityId: String, lines: List<JSONObject>) {
         if (lines.isEmpty()) {
             toast("没有结果")
             return
@@ -133,29 +126,37 @@ class LinesActivity : com.yg.busisland.ui.PageActivity() {
         val labels = lines.map { o ->
             val start = o.optString("startSn")
             val end = o.optString("endSn")
-            "${o.optString("name")}  ${if (start.isBlank()) "" else "$start → $end"}"
+            val name = o.optString("name")
+            "$name  ${if (start.isBlank()) "" else "$start → $end"}"
         }.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle("选择线路")
-            .setItems(labels) { _, i ->
-                val o = lines[i]
+            .setItems(labels) { _, index ->
+                val o = lines[index]
                 loadStations(
-                    cityId,
-                    o.optString("lineId"),
-                    o.optString("name"),
-                    o.optString("lineNo", o.optString("name")),
-                    o.optInt("direction", 0),
-                    place
+                    cityId = cityId,
+                    lineId = o.optString("lineId"),
+                    lineName = o.optString("name"),
+                    lineNo = o.optString("lineNo", o.optString("name")),
+                    dir = o.optInt("direction", 0)
                 )
             }
             .setNegativeButton("取消", null)
             .show()
     }
 
-    private fun loadStations(cityId: String, lineId: String, lineName: String, lineNo: String, dir: Int, place: String) {
+    private fun loadStations(
+        cityId: String,
+        lineId: String,
+        lineName: String,
+        lineNo: String,
+        dir: Int
+    ) {
         toast("加载站点…")
         Thread {
-            val r = runCatching { BusApiClient.routeStations(cityId, lineId, lineName, prefs.udid) }
+            val r = runCatching {
+                BusApiClient.routeStations(cityId, lineId, lineName, prefs.udid)
+            }
             runOnUiThread {
                 r.onFailure { toast("站点加载失败：${it.message}") }
                 r.onSuccess { arr ->
@@ -165,24 +166,33 @@ class LinesActivity : com.yg.busisland.ui.PageActivity() {
                     }
                     val firstSn = arr.optJSONObject(0)?.optString("sn").orEmpty()
                     val lastSn = arr.optJSONObject(arr.length() - 1)?.optString("sn").orEmpty()
-                    val names = (0 until arr.length()).map { idx ->
-                        val s = arr.getJSONObject(idx)
+                    val names = (0 until arr.length()).map { index ->
+                        val s = arr.getJSONObject(index)
                         "${s.optInt("order")}. ${s.optString("sn")}"
                     }.toTypedArray()
                     AlertDialog.Builder(this)
                         .setTitle("${lineNo.ifBlank { lineName }}  $firstSn ↔ $lastSn")
-                        .setItems(names) { _, idx ->
-                            val s = arr.getJSONObject(idx)
+                        .setItems(names) { _, index ->
+                            val s = arr.getJSONObject(index)
                             val sub = LineSub(
-                                cityId, lineId, lineName, lineNo, dir,
-                                s.optInt("order"), s.optString("sn"), s.optString("sId"), place,
-                                startSn = firstSn, endSn = lastSn
+                                cityId = cityId,
+                                lineId = lineId,
+                                lineName = lineName,
+                                lineNo = lineNo,
+                                direction = dir,
+                                targetOrder = s.optInt("order"),
+                                stationName = s.optString("sn"),
+                                stationId = s.optString("sId"),
+                                place = "",
+                                startSn = firstSn,
+                                endSn = lastSn
                             )
-                            val list = prefs.lines
-                            list.add(sub)
-                            prefs.lines = list
-                            render()
-                            toast("已订阅：${sub.title} @ ${sub.stationName}")
+                            if (prefs.addLine(sub)) {
+                                render()
+                                toast("已订阅：${sub.title} @ ${sub.stationName}")
+                            } else {
+                                toast("已订阅，无需重复添加")
+                            }
                         }
                         .setNegativeButton("取消", null)
                         .show()

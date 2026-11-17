@@ -1,77 +1,76 @@
 # 下一班 · nextbus
 
-[![build](https://github.com/KevinZjYang/nextbus/actions/workflows/build.yml/badge.svg)](https://github.com/KevinZjYang/nextbus/actions/workflows/build.yml)
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
-通勤公交实时到站 + 小米澎湃OS 超级岛提醒。设好家/公司，通勤时段走到附近，自动查车并把「线路 + 还有几分钟」显示在岛上。
-
-<img src="docs/screenshots/main.webp" width="196" alt="概览"> <img src="docs/screenshots/monitor.webp" width="196" alt="通勤监控"> <img src="docs/screenshots/timewheel.webp" width="196" alt="时间滚轮"> <img src="docs/screenshots/settings.webp" width="196" alt="设置">
+一支打开即用的公交到站小工具：**不跑后台、不发定时通知、不占用灵动岛**。需要查车时打开 App，首页直接列附近公交；订阅过的线路置顶。
+![首页](docs/screenshots/main.webp)
 
 ## 功能
 
-- **通勤监控**：任意地点（家、公司、学校…）各绑线路；只在设定的通勤时段定位，离家远就降频，省电
-- **分页设置**：概览 → 通勤监控 / 地点 / 订阅线路 / 到站提醒 / 设置，时间用滚轮选，不再一层层弹窗
-- **超级岛**：走媒体通知通道上岛，免小米白名单授权；显示线路名与到站时间
-- **附近公交**：进页面直接铺开「站点 → 经过线路 → 到站时间」，陌生地方也能看；也可用当前位置模式
-- **到站提醒**：提前 N 分钟弹通知，铃声跟随系统通知管理
-- **选点**：POI 搜索 / 高德定位 / 粘坐标；城市自动识别
+- **打开即查**：有定位权限时，进入首页自动查当前位置附近站点与线路；没有权限时可用「常去地点」兜底。
+- **订阅置顶**：点首页或附近页的线路即可订阅，下次打开时该线路固定排在最上面；再点一次取消。
+- **附近线路**：按站点分组查看线路、方向、首末班和到站时间；点线路直接订阅，不再询问绑定地点。
+- **地图看站与走向**：首页或附近页点「在地图上查看」，可看附近站点位置；选一条线路后显示它的走向折线和上车站，支持「看全线 / 回到附近」。
+- **快速定位**：家 / 公司 / 学校等地点只用于快速定位，不绑定订阅。
+- **城市自动识别**：优先用当前定位城市；失败时回退到设置里的城市或已设地点。
+- **无后台**：没有前台服务、精确闹钟、开机自启、通知渠道或灵动岛代码。
 
 ## 构建
 
-需要 JDK 17、Android SDK（compileSdk 33）。
+需要 JDK 17、Android SDK 33：
 
 ```bash
-git clone https://github.com/KevinZjYang/nextbus.git
-cd nextbus
-cp local.properties.sample local.properties   # 填 sdk.dir 和 amap.key
-./gradlew assembleDebug                        # 产物在 app/build/outputs/apk/debug/
+./gradlew assembleDebug
 ```
 
-`amap.key` 是[高德开放平台](https://lbs.amap.com/)的 Android 定位 Key，需绑定包名 `com.yg.busisland` 与签名 SHA1。不填也能构建，只是定位不可用（会退回系统定位）。
+Windows：
 
-仓库不带签名文件。放 `keystore/busisland.jks` 才会用固定签名（换签名装机会清数据）：
-
-```
-alias      busisland
-store/key  busisland123
-SHA1       7A:8D:B4:69:69:D5:69:70:97:BB:62:5D:94:A5:51:FF:6B:95:C3:1B
-SHA256     AE:AC:12:84:06:E7:C0:21:A9:B7:D3:91:DB:07:B2:1B:88:39:B7:53:34:7D:02:BC:72:12:46:52:ED:A0:8C:0A
+```bat
+gradlew.bat assembleDebug
 ```
 
-CI（GitHub Actions）每次 push 到 master 会构建 debug 包并作为 artifact 上传。
+产物在 `app/build/outputs/apk/debug/app-debug.apk`。
 
-## 安装与授权
+高德 Key 可写在 `local.properties`（定位和地图共用；没有 key 时定位回退系统定位，地图入口隐藏）：
 
-1. `adb install -r app-debug.apk`，首次装完给通知权限（`adb shell appops set com.yg.busisland POST_NOTIFICATION allow`）
-2. 设置里打开：自启动、电池优化忽略、省电策略无限制——否则后台会被清
-3. 主页「城市」选城市 → 「地点」添加家/公司并选点 → 「订阅线路」绑定线路
-4. 「通勤时段」设上下班时间与工作日；「到站提醒」设提前几分钟
+```properties
+sdk.dir=D:\\Android\\Sdk
+amap.key=你的高德Key
+```
 
-## 工作原理
+没有 key 时会回退系统定位。签名配置可选，见 `app/build.gradle.kts`。
 
-- 主页/服务按通勤时段与围栏调度定位：远则低频、近则按 `刷新间隔`（默认 45s）轮询
-- 轮询时把结果渲染成一条常驻通知；支持超级岛的系统会把它显示成岛（走 MediaStyle，外形偏音乐卡片）
-- 只查当前最近地点绑定的线路，所有请求都在后台线程，失败保留上次结果
+## 使用
 
-接口协议、签名与加密细节整理在 [docs/protocol.md](docs/protocol.md)。
+1. 安装后打开 App。
+2. 首次进入会请求定位权限；允许后首页自动查询。拒绝也能用「常去地点」查询。
+3. 首页「附近线路」中点一条线路即可订阅，订阅后出现在「我的线路」并置顶。
+4. 在「更多 → 城市」里可自动识别、用已设地点或搜索城市名。
+5. 「附近公交」页可按站点查看全部线路，也可点「查看全部附近站点」进入。
+6. 首页或附近页点「在地图上查看」进入地图；点线路条切换走向，点站点标记查看经过线路。
+
+## 工作方式
+
+- 所有查询都在前台完成：定位 → 附近站点 → 并发拉取每站线路 → 合并、去重、排序。
+- 同一线路同方向只保留最近站点；订阅按 `lineId + direction` 匹配，不依赖地点。
+- 查询结果只保存在当前页面内存中，退出即释放，不做后台轮询或定时任务。
+- 地图使用最近一次「附近」查询结果；站点坐标来自附近接口，线路走向来自 `lineRoute` 接口的 `route[]`，不足时回退站点连线。
 
 ## 已知限制
 
-- 官方 `miui.focus.param` 模板需要小米白名单（企业主体 + appid），个人开发者走不通，所以用媒体卡片通道，外形是音乐卡片
-- 非通勤时段服务会停掉，只留闹钟唤醒；此时岛不更新
-- 接口没有公开文档，字段随 App 版本可能变化
+- 使用非官方接口，接口字段可能变化；失败时页面保留上一次结果并提示。
+- 定位精度受系统和高德 SDK 影响；室内可能拿不到位置。
+- 城市识别失败时需要手动在设置里选城市。
+- 站点/线路数据以接口返回为准，部分站点可能暂时没有线路数据。
+- 地图需要有效的高德 Key；线路走向缺失时只显示站点，不影响列表订阅。
 
 ## 目录
 
+```text
+app/                 Android 应用
+docs/protocol.md     接口协议说明
+docs/screenshots/    截图
+tools/probe.mjs      接口探测脚本
 ```
-app/                   Android 工程（Kotlin，无 XML 布局）
-docs/protocol.md       接口协议整理
-docs/screenshots/      截图
-tools/probe.mjs        协议探针（Node，无依赖）
-```
 
-## 许可证
+## License
 
-MIT，见 [LICENSE](LICENSE)。
-
-> 接口参数由样本 APK 逆向分析得到，仅供个人学习与自用，请勿用于商业用途或大规模抓取。
+MIT

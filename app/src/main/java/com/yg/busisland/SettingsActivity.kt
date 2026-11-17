@@ -1,28 +1,34 @@
 package com.yg.busisland
 
-import android.app.AlertDialog
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
-import android.widget.TextView
 import android.widget.Toast
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.yg.busisland.ui.ListRow
 import com.yg.busisland.ui.PageScaffold
 
-/** 设置：围栏与刷新、后台运行、关于、开发者 */
+/** 设置：只剩定位、城市和关于。 */
 class SettingsActivity : com.yg.busisland.ui.PageActivity() {
+
+    companion object {
+        private const val REQ_LOCATION = 301
+    }
 
     private lateinit var prefs: Prefs
     private lateinit var page: PageScaffold
-    private lateinit var tvFence: TextView
-    private lateinit var tvInterval: TextView
-    private lateinit var tvBattery: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
-        page = PageScaffold(this, "设置", null, showBack = true, onBack = { finish() })
-        render()
+        page = PageScaffold(
+            this, "设置", "打开即查，不跑后台服务",
+            showBack = true, onBack = { finish() }
+        )
         setContentView(page.root)
+        render()
     }
 
     override fun onResume() {
@@ -33,103 +39,61 @@ class SettingsActivity : com.yg.busisland.ui.PageActivity() {
     private fun render() {
         page.clearBody()
 
-        page.section("围栏与刷新")
-        val fenceCard = page.card()
-        tvFence = ListRow.add(fenceCard, "📍", "围栏半径", "${prefs.radius} m") { pickFence() }
-        tvInterval = ListRow.add(fenceCard, "🔄", "刷新间隔", "${prefs.intervalSec} s") { pickInterval() }
-        page.hint("离最近地点超过围栏半径就降低刷新频率，省电。")
-
-        page.section("后台运行")
-        val keepCard = page.card()
-        ListRow.add(keepCard, "🚀", "自启动", null) { openAutoStart() }
-        tvBattery = ListRow.add(keepCard, "🔋", "电池优化", if (batteryIgnored()) "已忽略" else "去设置") {
-            requestIgnoreBattery()
+        page.section("定位与城市")
+        val card = page.card()
+        ListRow.add(card, "🏙", "城市", CityPicker.label(prefs)) {
+            CityPicker.show(this, prefs) { render() }
         }
-        ListRow.add(keepCard, "⚡", "省电策略", null) { openPowerSaver() }
-        ListRow.footnote(keepCard, "三项都设好，后台才不会被系统清掉。")
+        ListRow.add(
+            card, "📍", "定位权限",
+            if (hasLocationPermission()) "已授权" else "未授权"
+        ) {
+            if (hasLocationPermission()) {
+                toast("已授权；不想用时可在系统设置里关闭")
+            } else {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION
+                    ),
+                    REQ_LOCATION
+                )
+            }
+        }
+        page.hint("有定位时首页打开即查；没有定位时可用常去地点兜底。应用不在后台轮询。")
 
         page.section("其他")
-        val moreCard = page.card()
-        ListRow.add(moreCard, "ℹ️", "关于") {
+        val other = page.card()
+        ListRow.add(other, "ℹ️", "关于") {
             startActivity(Intent(this, AboutActivity::class.java))
         }
         if (BuildConfig.DEBUG) {
-            ListRow.add(moreCard, "🧪", "开发者") {
+            ListRow.add(other, "🛠", "开发者") {
                 startActivity(Intent(this, DebugActivity::class.java))
             }
         }
+        ListRow.add(other, "📦", "版本", BuildConfig.VERSION_NAME, chevron = false)
     }
 
-    private fun pickFence() {
-        val values = intArrayOf(200, 300, 500, 800, 1000, 1500, 2000)
-        AlertDialog.Builder(this)
-            .setTitle("围栏半径")
-            .setItems(values.map { "$it m" }.toTypedArray()) { _, i ->
-                prefs.radius = values[i]
-                tvFence.text = "${prefs.radius} m"
+    private fun hasLocationPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_LOCATION) {
+            render()
+            if (!hasLocationPermission()) {
+                toast("未授权，可继续用常去地点查询")
             }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun pickInterval() {
-        val values = intArrayOf(20, 30, 45, 60, 90, 120)
-        AlertDialog.Builder(this)
-            .setTitle("刷新间隔")
-            .setItems(values.map { "$it 秒" }.toTypedArray()) { _, i ->
-                prefs.intervalSec = values[i]
-                tvInterval.text = "${prefs.intervalSec} s"
-            }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    // ------------------------------------------------------------ 系统页跳转
-
-    private fun batteryIgnored(): Boolean = runCatching {
-        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
-        pm.isIgnoringBatteryOptimizations(packageName)
-    }.getOrDefault(false)
-
-    private fun openAutoStart() {
-        val intents = listOf(
-            Intent().setComponent(android.content.ComponentName(
-                "com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"
-            )),
-            Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                .setData(android.net.Uri.parse("package:$packageName"))
-        )
-        for (i in intents) {
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (runCatching { startActivity(i) }.isSuccess) return
         }
-        toast("没找到自启动设置页，去安全中心手动开")
-    }
-
-    private fun requestIgnoreBattery() {
-        if (batteryIgnored()) {
-            toast("已经在忽略名单里了")
-            return
-        }
-        val i = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-            .setData(android.net.Uri.parse("package:$packageName"))
-        runCatching { startActivity(i) }
-            .onFailure { startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-    }
-
-    private fun openPowerSaver() {
-        val intents = listOf(
-            Intent().setComponent(android.content.ComponentName(
-                "com.miui.powerkeeper", "com.miui.powerkeeper.ui.HiddenAppsConfigActivity"
-            )).putExtra("package_name", packageName).putExtra("package_label", "下一班"),
-            Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                .setData(android.net.Uri.parse("package:$packageName"))
-        )
-        for (i in intents) {
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (runCatching { startActivity(i) }.isSuccess) return
-        }
-        toast("没找到省电策略页，去省电与电池里手动设")
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
