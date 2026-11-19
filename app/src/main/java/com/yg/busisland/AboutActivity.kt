@@ -24,8 +24,9 @@ class AboutActivity : com.yg.busisland.ui.PageActivity() {
 
         page.section("说明")
         val infoCard = page.card()
-        ListRow.add(infoCard, "🚏", "查询方式", "打开应用时前台查附近公交", chevron = false)
+        ListRow.add(infoCard, "🚏", "查询方式", "打开应用时前台查附近公交与实时到站", chevron = false)
         ListRow.add(infoCard, "★", "订阅", "按线路 + 方向置顶，不绑地点", chevron = false)
+        ListRow.add(infoCard, "🕒", "下一班", "首页大卡、详情、列表与地图共用实时到站", chevron = false)
         ListRow.add(infoCard, "📄", "接口协议", "docs/protocol.md", chevron = false)
 
         page.section("源码")
