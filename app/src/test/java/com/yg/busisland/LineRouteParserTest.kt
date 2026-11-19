@@ -9,11 +9,15 @@ class LineRouteParserTest {
 
     private fun parse(json: String) = LineRouteParser.parse(JSONObject(json))
 
+    /** lineRoute 缺省/声明 wgs，解析后应已是 GCJ。 */
+    private fun gcjLat(lat: Double, lng: Double) = Gcj.toGcj(lat, lng)[0]
+
     @Test
     fun `sorts stops but preserves route array order`() {
         val route = parse(
             """
             {
+              "gpstype": "wgs",
               "stations": [
                 {"order": 2, "sId": "b", "sn": "B", "lat": 30.2, "lng": 120.2},
                 {"order": 1, "sId": "a", "sn": "A", "lat": 30.1, "lng": 120.1}
@@ -27,7 +31,15 @@ class LineRouteParserTest {
             """.trimIndent()
         )
         assertEquals(listOf("a", "b"), route.stops.map { it.sId })
-        assertEquals(listOf(30.3, 30.1, 30.2), route.points.map { it.lat })
+        assertEquals(
+            listOf(
+                gcjLat(30.3, 120.3),
+                gcjLat(30.1, 120.1),
+                gcjLat(30.2, 120.2)
+            ),
+            route.points.map { it.lat }
+        )
+        assertEquals(gcjLat(30.1, 120.1), route.stops[0].lat, 1e-9)
     }
 
     @Test
@@ -42,7 +54,10 @@ class LineRouteParserTest {
             }
             """.trimIndent()
         )
-        assertEquals(listOf(30.1, 30.2), route.points.map { it.lat })
+        assertEquals(
+            listOf(gcjLat(30.1, 120.1), gcjLat(30.2, 120.2)),
+            route.points.map { it.lat }
+        )
     }
 
     @Test
@@ -62,8 +77,8 @@ class LineRouteParserTest {
             """.trimIndent()
         )
         assertEquals(2, route.points.size)
-        assertEquals(30.1, route.points[0].lat, 0.0)
-        assertEquals(30.2, route.points[1].lat, 0.0)
+        assertEquals(gcjLat(30.1, 120.1), route.points[0].lat, 1e-9)
+        assertEquals(gcjLat(30.2, 120.2), route.points[1].lat, 1e-9)
     }
 
     @Test
@@ -79,7 +94,10 @@ class LineRouteParserTest {
             }
             """.trimIndent()
         )
-        assertEquals(listOf(30.1, 30.2), route.points.map { it.lat })
+        assertEquals(
+            listOf(gcjLat(30.1, 120.1), gcjLat(30.2, 120.2)),
+            route.points.map { it.lat }
+        )
     }
 
     @Test
@@ -87,5 +105,40 @@ class LineRouteParserTest {
         val route = parse("{}")
         assertTrue(route.stops.isEmpty())
         assertTrue(route.points.isEmpty())
+    }
+
+    @Test
+    fun `keeps gcj coordinates when response declares gcj`() {
+        val route = parse(
+            """
+            {
+              "gpstype": "gcj",
+              "stations": [
+                {"order": 1, "sId": "a", "sn": "A", "lat": 30.1, "lng": 120.1, "gpsType": "gcj"}
+              ],
+              "route": [{"stopOrder": 1, "lat": 30.1, "lng": 120.1}]
+            }
+            """.trimIndent()
+        )
+        assertEquals(30.1, route.stops[0].lat, 0.0)
+        assertEquals(30.1, route.points[0].lat, 0.0)
+    }
+
+    @Test
+    fun `station gpsType overrides top level`() {
+        val route = parse(
+            """
+            {
+              "gpstype": "wgs",
+              "stations": [
+                {"order": 1, "sId": "a", "sn": "A", "lat": 30.1, "lng": 120.1, "gpsType": "gcj"},
+                {"order": 2, "sId": "b", "sn": "B", "lat": 30.2, "lng": 120.2}
+              ],
+              "route": [{"stopOrder": 1, "lat": 30.1, "lng": 120.1}]
+            }
+            """.trimIndent()
+        )
+        assertEquals(30.1, route.stops[0].lat, 0.0)
+        assertEquals(gcjLat(30.2, 120.2), route.stops[1].lat, 1e-9)
     }
 }

@@ -2,8 +2,6 @@ package com.yg.busisland
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.content.Context
-import android.location.LocationManager
 import android.widget.EditText
 import android.widget.Toast
 
@@ -33,12 +31,12 @@ object CityPicker {
         else "${prefs.cityName} ${prefs.cityId}".trim()
 
     private fun fromLocation(activity: Activity, prefs: Prefs, onPicked: (CityInfo) -> Unit) {
-        val loc = lastKnown(activity)
-        if (loc == null) {
-            toast(activity, "暂无定位缓存，改用搜索城市名")
+        val fix = SystemLocator.lastGood(activity)
+        if (fix == null) {
+            toast(activity, "暂无可用定位，改用搜索城市名")
             return
         }
-        resolve(activity, prefs, loc.latitude, loc.longitude, onPicked)
+        resolve(activity, prefs, fix.lat, fix.lng, onPicked)
     }
 
     private fun fromPlace(activity: Activity, prefs: Prefs, onPicked: (CityInfo) -> Unit) {
@@ -117,17 +115,6 @@ object CityPicker {
 
     private fun save(prefs: Prefs, city: CityInfo) {
         prefs.saveCity(city)
-    }
-
-    private fun lastKnown(activity: Activity): android.location.Location? {
-        val mgr = activity.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
-        return listOf(
-            "fused",
-            LocationManager.NETWORK_PROVIDER,
-            LocationManager.GPS_PROVIDER
-        ).mapNotNull { provider ->
-            runCatching { mgr.getLastKnownLocation(provider) }.getOrNull()
-        }.maxByOrNull { it.time }
     }
 
     private fun toast(activity: Activity, text: String) {

@@ -176,11 +176,15 @@ class LinesActivity : com.yg.busisland.ui.PageActivity() {
                                 startSn = firstSn,
                                 endSn = lastSn
                             )
-                            if (prefs.addLine(sub)) {
-                                render()
-                                toast("已订阅：${sub.title} @ ${sub.stationName}")
+                            if (sub.targetOrder <= 0 || sub.stationId.isBlank()) {
+                                toast("这一站缺少站序，换一站试试")
                             } else {
-                                toast("已订阅，无需重复添加")
+                                val added = prefs.upsertLine(sub)
+                                render()
+                                toast(
+                                    if (added) "已订阅：${sub.title} @ ${sub.stationName}"
+                                    else "已更新上车站：${sub.stationName}"
+                                )
                             }
                         }
                         .setNegativeButton("取消", null)

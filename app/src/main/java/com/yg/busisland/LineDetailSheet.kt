@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.res.ColorStateList
 import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -62,6 +64,7 @@ data class LineDetailTarget(
         fun from(row: NearbyLineRow, cityId: String): LineDetailTarget {
             val line = row.line
             val station = row.station
+            val sub = row.subscription
             return LineDetailTarget(
                 cityId = cityId,
                 lineId = line.lineId,
@@ -70,11 +73,13 @@ data class LineDetailTarget(
                 direction = line.direction,
                 startSn = line.startSn,
                 endSn = line.endSn,
-                stationName = line.stationName.ifBlank { station.name },
-                stationId = line.sId.ifBlank { station.sId },
-                order = line.order,
-                distance = station.distance,
-                etaText = line.etaText,
+                stationName = sub?.stationName?.takeIf { it.isNotBlank() }
+                    ?: line.stationName.ifBlank { station.name },
+                stationId = sub?.stationId?.takeIf { it.isNotBlank() }
+                    ?: line.sId.ifBlank { station.sId },
+                order = sub?.targetOrder ?: line.order,
+                distance = row.boardingDistanceM.takeIf { it >= 0 },
+                etaText = if (row.boardingMatchesStation) line.etaText else "",
                 timeRange = line.timeRange,
                 hasNearby = true
             )
@@ -107,6 +112,20 @@ object LineDetailSheet {
         val executor = Executors.newSingleThreadExecutor()
         val closed = AtomicBoolean(false)
         var requestId = 0
+
+        // 当前选中的上车站；打开时默认取订阅记录，没有订阅则取附近这一站。
+        var pickedOrder = target.order
+        var pickedName = target.stationName
+        var pickedId = target.stationId
+        var pickedDistance: Int? = target.distance
+        var pickedEta = target.etaText
+        var loadedStops: List<RouteStop> = emptyList()
+        var boardingHint = ""
+        var etaResult: RealTimeResult? = null
+        var etaLoading = false
+        var etaSeq = 0
+        val etaHandler = Handler(Looper.getMainLooper())
+        val etaExecutor = Executors.newSingleThreadExecutor()
 
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -157,6 +176,26 @@ object LineDetailSheet {
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(activity.colorOnSurface())
         }
+        val etaRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, activity.dp(6), 0, 0)
+        }
+        val etaBigView = TextView(activity).apply {
+            textSize = 30f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(activity.colorPrimary())
+            maxLines = 1
+        }
+        val etaSubView = TextView(activity).apply {
+            textSize = 11.5f
+            setTextColor(activity.colorOnSurfaceVariant())
+            gravity = Gravity.END
+            maxLines = 2
+            setPadding(activity.dp(10), 0, 0, 0)
+        }
+        etaRow.addView(etaBigView, LinearLayout.LayoutParams(-2, -2))
+        etaRow.addView(etaSubView, LinearLayout.LayoutParams(0, -2, 1f))
         val metaView = TextView(activity).apply {
             textSize = 13f
             setTextColor(activity.colorOnSurfaceVariant())
@@ -168,6 +207,7 @@ object LineDetailSheet {
             setPadding(0, activity.dp(3), 0, 0)
         }
         summaryBody.addView(stationView)
+        summaryBody.addView(etaRow)
         summaryBody.addView(metaView)
         summaryBody.addView(routeView)
         summary.addView(summaryBody)
@@ -221,6 +261,7 @@ object LineDetailSheet {
                     android.content.Intent(activity, NearbyMapActivity::class.java)
                         .putExtra(NearbyMapActivity.EXTRA_LINE_ID, target.lineId)
                         .putExtra(NearbyMapActivity.EXTRA_DIRECTION, target.direction)
+                        .putExtra(NearbyMapActivity.EXTRA_TARGET_ORDER, pickedOrder)
                 )
             }
         }
@@ -242,17 +283,20 @@ object LineDetailSheet {
         }
 
         fun currentStop(stop: RouteStop): Boolean {
-            if (target.stationId.isNotBlank() && stop.sId == target.stationId) return true
-            if (target.stationName.isNotBlank() && stop.name == target.stationName) return true
-            return target.order > 0 && stop.order == target.order
+            if (pickedId.isNotBlank() && stop.sId == pickedId) return true
+            if (pickedName.isNotBlank() && stop.name == pickedName) return true
+            return pickedOrder > 0 && stop.order == pickedOrder
         }
 
         var loadRoute: () -> Unit = {}
+        var loadRealtime: () -> Unit = {}
+        var syncSubscription: (Boolean) -> Unit = {}
+        var refreshSummary: () -> Unit = {}
 
-        fun renderRoute(stops: List<RouteStop>, error: String? = null) {
+        fun renderRoute(stops: List<RouteStop>, error: String? = null, scrollTo: Int = -1) {
             routeList.removeAllViews()
             routeCount.text = when {
-                stops.isNotEmpty() -> "共 ${stops.size} 站"
+                stops.isNotEmpty() -> "共 ${stops.size} 站 · 点击选上车站"
                 error != null -> "加载失败"
                 else -> "暂无站点"
             }
@@ -290,6 +334,27 @@ object LineDetailSheet {
                     gravity = Gravity.CENTER_VERTICAL
                     setPadding(activity.dp(8), activity.dp(8), activity.dp(8), activity.dp(8))
                     if (current) setBackgroundColor(0x140066FF)
+                    isClickable = true
+                    setOnClickListener {
+                        val y = routeScroll.scrollY
+                        pickedOrder = stop.order
+                        pickedId = stop.sId
+                        pickedName = stop.name
+                        pickedDistance = null
+                        pickedEta = ""
+                        boardingHint = if (prefs.isSubscribed(target.lineId, target.direction)) {
+                            ""
+                        } else {
+                            "已选择，点订阅保存"
+                        }
+                        etaSeq++
+                        etaLoading = false
+                        etaResult = null
+                        refreshSummary()
+                        renderRoute(loadedStops, scrollTo = y)
+                        loadRealtime()
+                        syncSubscription(true)
+                    }
                 }
                 row.addView(TextView(activity).apply {
                     text = stop.order.toString()
@@ -313,6 +378,9 @@ object LineDetailSheet {
                     })
                 }
                 routeList.addView(row, LinearLayout.LayoutParams(-1, -2))
+            }
+            if (scrollTo >= 0) {
+                routeScroll.post { routeScroll.scrollTo(0, scrollTo) }
             }
         }
 
@@ -344,8 +412,42 @@ object LineDetailSheet {
                 }
                 activity.runOnUiThread {
                     if (closed.get() || id != requestId || activity.isFinishing) return@runOnUiThread
-                    result.onSuccess { renderRoute(it.stops) }
-                    result.onFailure { renderRoute(emptyList(), "站点加载失败：${it.message ?: "网络错误"}") }
+                    result.onSuccess { route ->
+                        loadedStops = route.stops
+                        val mismatch = route.stops.isNotEmpty() && route.stops.none { stop ->
+                            (pickedId.isNotBlank() && stop.sId == pickedId) ||
+                                (pickedName.isNotBlank() && stop.name == pickedName) ||
+                                (pickedOrder > 0 && stop.order == pickedOrder)
+                        }
+                        if (mismatch) {
+                            val found = route.stops.firstOrNull {
+                                pickedId.isNotBlank() && it.sId == pickedId
+                            } ?: route.stops.firstOrNull {
+                                pickedName.isNotBlank() && it.name == pickedName
+                            }
+                            if (found != null) {
+                                pickedOrder = found.order
+                                pickedId = found.sId
+                                pickedName = found.name
+                                pickedDistance = null
+                                pickedEta = ""
+                                boardingHint = ""
+                                if (prefs.isSubscribed(target.lineId, target.direction)) {
+                                    syncSubscription(true)
+                                }
+                            } else if (pickedName.isNotBlank() || pickedOrder > 0) {
+                                pickedOrder = 0
+                                boardingHint = "原上车站不在该线路，请重新选择"
+                            }
+                        }
+                        refreshSummary()
+                        renderRoute(route.stops)
+                        loadRealtime()
+                    }
+                    result.onFailure {
+                        loadedStops = emptyList()
+                        renderRoute(emptyList(), "站点加载失败：${it.message ?: "网络错误"}")
+                    }
                 }
             }
         }
@@ -356,17 +458,100 @@ object LineDetailSheet {
             directionView.text = target.towards
         }
 
+        fun metersText(meters: Int): String =
+            if (meters < 1000) "${meters}m"
+            else String.format(java.util.Locale.getDefault(), "%.1fkm", meters / 1000.0)
+
         fun renderSummary() {
-            stationView.text = target.stationName.ifBlank { "上车站未设置" }
+            stationView.text = pickedName.ifBlank { "上车站未设置" }
+            val result = etaResult
+            val bus = result?.firstBus()
+            etaBigView.text = when {
+                pickedOrder <= 0 -> "—"
+                etaLoading && result == null -> "…"
+                result != null && !result.ok -> "失败"
+                bus != null -> bus.etaText
+                result != null && (result.lineDesc.contains("不在运营") ||
+                    result.lineDesc.contains("停运")) -> "停运"
+                result != null -> "暂无车"
+                else -> "…"
+            }
+            etaSubView.text = when {
+                pickedOrder <= 0 -> "先点下方站点选择上车站"
+                bus != null -> buildString {
+                    if (bus.clock.isNotBlank()) append("预计 ").append(bus.clock)
+                    result.buses.getOrNull(1)?.let {
+                        if (isNotEmpty()) append(" · ")
+                        append("后一班 ").append(it.etaText)
+                    }
+                    if (bus.distance > 0) {
+                        if (isNotEmpty()) append(" · ")
+                        append("距站 ").append(metersText(bus.distance))
+                    }
+                }
+                result != null && !result.ok -> result.message.ifBlank { "实时查询失败" }
+                result != null && result.lineDesc.isNotBlank() -> result.lineDesc
+                !result?.nextOperationDesc.isNullOrBlank() -> result.nextOperationDesc
+                etaLoading -> "正在查实时到站…"
+                else -> target.timeRange
+            }
             val parts = mutableListOf<String>()
-            if (target.distance != null && target.distance >= 0) parts.add("${target.distance}m")
-            if (target.etaText.isNotBlank()) parts.add(target.etaText)
+            val distance = pickedDistance
+            if (distance != null && distance >= 0) parts.add("${distance}m")
+            if (pickedEta.isNotBlank()) parts.add(pickedEta)
             if (!target.hasNearby) parts.add("附近未发现")
-            metaView.text = if (parts.isEmpty()) "暂无实时到站" else parts.joinToString(" · ")
+            if (boardingHint.isNotBlank()) parts.add(boardingHint)
+            metaView.text = if (parts.isEmpty()) "点站点可改上车站" else parts.joinToString(" · ")
             routeView.text = listOf(target.timeRange, target.routeText)
                 .filter { it.isNotBlank() }
                 .joinToString(" · ")
         }
+
+        loadRealtime = {
+            val city = target.cityId.ifBlank { prefs.cityId }
+            val order = pickedOrder
+            if (closed.get() || city.isBlank() || order <= 0) {
+                etaLoading = false
+                refreshSummary()
+            } else if (!etaLoading) {
+                etaLoading = true
+                val id = ++etaSeq
+                val sub = LineSub(
+                    cityId = city,
+                    lineId = target.lineId,
+                    lineName = target.lineName,
+                    lineNo = target.lineNo,
+                    direction = target.direction,
+                    targetOrder = order,
+                    stationName = pickedName.ifBlank { "上车站" },
+                    stationId = pickedId,
+                    place = "",
+                    startSn = target.startSn,
+                    endSn = target.endSn
+                )
+                refreshSummary()
+                etaExecutor.execute {
+                    val result = runCatching { BusApiClient.realtime(sub, prefs.udid) }
+                    activity.runOnUiThread {
+                        if (closed.get() || id != etaSeq) return@runOnUiThread
+                        etaLoading = false
+                        result.onSuccess { etaResult = it }
+                            .onFailure {
+                                etaResult = RealTimeResult(
+                                    lineDesc = "",
+                                    preArrival = "",
+                                    buses = emptyList(),
+                                    ok = false,
+                                    message = it.message ?: "实时查询失败"
+                                )
+                            }
+                        refreshSummary()
+                    }
+                }
+            }
+        }
+
+        refreshSummary = { renderSummary() }
 
         fun renderSubscribe() {
             val subscribed = prefs.isSubscribed(target.lineId, target.direction)
@@ -380,6 +565,31 @@ object LineDetailSheet {
             }
         }
 
+        syncSubscription = { silent ->
+            if (prefs.isSubscribed(target.lineId, target.direction)) {
+                val city = target.cityId.ifBlank { prefs.cityId }
+                val existing = prefs.lines.firstOrNull {
+                    it.lineId == target.lineId && it.direction == target.direction
+                }
+                if (existing != null && pickedOrder > 0 && city.isNotBlank()) {
+                    prefs.upsertLine(
+                        existing.copy(
+                            cityId = city,
+                            targetOrder = pickedOrder,
+                            stationName = pickedName.ifBlank { "上车站" },
+                            stationId = pickedId,
+                            startSn = target.startSn,
+                            endSn = target.endSn
+                        )
+                    )
+                    renderHeader()
+                    renderSubscribe()
+                    onChanged()
+                    if (!silent) toast("已更新上车站：${pickedName}")
+                }
+            }
+        }
+
         subButton.setOnClickListener {
             val city = target.cityId.ifBlank { prefs.cityId }
             if (city.isBlank()) {
@@ -388,7 +598,7 @@ object LineDetailSheet {
             }
             if (prefs.isSubscribed(target.lineId, target.direction)) {
                 AlertDialog.Builder(activity)
-                    .setTitle("${target.title} · ${target.stationName}")
+                    .setTitle("${target.title} · ${pickedName.ifBlank { "上车站" }}")
                     .setMessage("取消订阅这条线路？")
                     .setPositiveButton("取消订阅") { _, _ ->
                         prefs.removeLine(target.lineId, target.direction)
@@ -401,27 +611,44 @@ object LineDetailSheet {
                     .show()
                 return@setOnClickListener
             }
+            if (loadedStops.isEmpty()) {
+                toast("请先等站点加载完成")
+                return@setOnClickListener
+            }
+            val stop = loadedStops.firstOrNull {
+                (pickedId.isNotBlank() && it.sId == pickedId) ||
+                    (pickedOrder > 0 && it.order == pickedOrder)
+            }
+            if (pickedOrder <= 0 || stop == null) {
+                toast("请先在途经站点中选择上车站")
+                return@setOnClickListener
+            }
+            pickedOrder = stop.order
+            pickedId = stop.sId
+            pickedName = stop.name
+            boardingHint = ""
             val sub = LineSub(
                 cityId = city,
                 lineId = target.lineId,
                 lineName = target.lineName,
                 lineNo = target.lineNo,
                 direction = target.direction,
-                targetOrder = target.order.coerceAtLeast(1),
-                stationName = target.stationName.ifBlank { "上车站" },
-                stationId = target.stationId,
+                targetOrder = pickedOrder,
+                stationName = pickedName.ifBlank { "上车站" },
+                stationId = pickedId,
                 place = "",
                 startSn = target.startSn,
                 endSn = target.endSn
             )
-            if (prefs.addLine(sub)) {
+            if (prefs.upsertLine(sub)) {
                 toast("已订阅，已置顶")
-                onChanged()
             } else {
-                toast("已订阅")
+                toast("已更新上车站：${pickedName}")
             }
+            onChanged()
             renderHeader()
             renderSubscribe()
+            refreshSummary()
         }
 
         renderHeader()
@@ -429,9 +656,19 @@ object LineDetailSheet {
         renderSubscribe()
         loadRoute()
 
+        val etaTick = object : Runnable {
+            override fun run() {
+                loadRealtime()
+                etaHandler.postDelayed(this, 15_000L)
+            }
+        }
+        etaHandler.postDelayed(etaTick, 400L)
+
         dialog.setContentView(root)
         dialog.setOnDismissListener {
             closed.set(true)
+            etaHandler.removeCallbacksAndMessages(null)
+            etaExecutor.shutdownNow()
             executor.shutdownNow()
         }
         dialog.show()

@@ -3,8 +3,6 @@ package com.yg.busisland
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.location.Location
-import android.location.LocationManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -96,29 +94,38 @@ class NearbyLinesActivity : PageActivity() {
         val id = ++requestId
         render()
 
-        AmapLocator.once(this, 10_000) { loc ->
-            if (id != requestId || isFinishing || isDestroyed) return@once
-            if (loc != null) {
-                loadFrom(loc.latitude, loc.longitude, "当前位置", null, true, id)
+        LocationProvider.best(this) { fix ->
+            if (id != requestId || isFinishing || isDestroyed) return@best
+            if (fix != null) {
+                loadFrom(
+                    fix.lat,
+                    fix.lng,
+                    labelFor(fix),
+                    null,
+                    true,
+                    id,
+                    fix.accuracyM
+                )
             } else {
-                val last = lastKnown()
-                if (last != null) {
-                    loadFrom(last.latitude, last.longitude, "系统定位", null, true, id)
+                val p = prefs.places.firstOrNull { it.valid }
+                if (p != null) {
+                    loadFrom(
+                        p.lat, p.lng, p.name.ifBlank { "地点" } + "（缓存）",
+                        p.cityId.ifBlank { null }, p.cityId.isBlank(), id
+                    )
                 } else {
-                    val p = prefs.places.firstOrNull { it.valid }
-                    if (p != null) {
-                        loadFrom(
-                            p.lat, p.lng, p.name.ifBlank { "地点" } + "（缓存）",
-                            p.cityId.ifBlank { null }, p.cityId.isBlank(), id
-                        )
-                    } else {
-                        loading = false
-                        status = "拿不到位置，打开定位再试"
-                        render()
-                    }
+                    loading = false
+                    status = "拿不到位置，打开定位再试"
+                    render()
                 }
             }
         }
+    }
+
+    private fun labelFor(fix: LocationFix): String = when {
+        !hasFineLocation() -> "大致位置"
+        fix.source == LocationFix.Source.SYSTEM -> "系统定位"
+        else -> "当前位置"
     }
 
     private fun loadFrom(
@@ -127,11 +134,12 @@ class NearbyLinesActivity : PageActivity() {
         label: String,
         cityId: String?,
         autoCity: Boolean,
-        id: Int = ++requestId
+        id: Int = ++requestId,
+        accuracyM: Float = -1f
     ) {
         loading = true
         status = "查询中…"
-        if (label == "当前位置") accuracy = -1f
+        accuracy = accuracyM
         render()
         loader.load(
             cityId = cityId ?: prefs.cityId,
@@ -196,7 +204,7 @@ class NearbyLinesActivity : PageActivity() {
             val card = page.card()
             pinned.forEach { row ->
                 NearbyLineRowView.add(
-                    card, row.line, row.station.name, row.station.distance, true
+                    card, row.line, row.boardingName, row.boardingDistanceM, true
                 ) {
                     LineDetailSheet.show(
                         this,
@@ -211,7 +219,7 @@ class NearbyLinesActivity : PageActivity() {
             val card = page.card()
             nearby.forEach { row ->
                 NearbyLineRowView.add(
-                    card, row.line, row.station.name, row.station.distance, false
+                    card, row.line, row.boardingName, row.boardingDistanceM, false
                 ) {
                     LineDetailSheet.show(
                         this,
@@ -332,16 +340,9 @@ class NearbyLinesActivity : PageActivity() {
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
 
-    private fun lastKnown(): Location? {
-        val mgr = getSystemService(LOCATION_SERVICE) as? LocationManager ?: return null
-        return listOf(
-            "fused",
-            LocationManager.NETWORK_PROVIDER,
-            LocationManager.GPS_PROVIDER
-        ).mapNotNull { provider ->
-            runCatching { mgr.getLastKnownLocation(provider) }.getOrNull()
-        }.maxByOrNull { it.time }
-    }
+    private fun hasFineLocation(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
 
     private fun openAppSettings() {
         runCatching {

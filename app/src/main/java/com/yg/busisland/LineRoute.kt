@@ -1,9 +1,8 @@
 package com.yg.busisland
 
 import org.json.JSONObject
-import kotlin.math.abs
 
-/** 地图上的一个坐标点（GCJ-02，和附近站点接口一致）。 */
+/** 地图上的一个坐标点（GCJ-02；解析边界已把接口的 WGS-84 转过来）。 */
 data class GeoPoint(val lat: Double, val lng: Double)
 
 /** 线路经过的站点。 */
@@ -29,8 +28,10 @@ object LineRouteParser {
 
     fun parse(data: JSONObject?): LineRoute {
         if (data == null) return LineRoute(emptyList(), emptyList())
-        val stops = parseStops(data.optJSONArray("stations"))
-        val route = parseRoute(data.optJSONArray("route"))
+        // 顶层 gpstype 缺省 wgs（与原 App LineRouteData 一致）；站点可带 gpsType 覆盖。
+        val top = GeoDatum.read(data)
+        val stops = parseStops(data.optJSONArray("stations"), top)
+        val route = parseRoute(data.optJSONArray("route"), top)
         val fallback = stops.map { GeoPoint(it.lat, it.lng) }
         val points = when {
             route.size >= 2 -> route
@@ -40,36 +41,38 @@ object LineRouteParser {
         return LineRoute(stops, dedupeConsecutive(points))
     }
 
-    private fun parseStops(array: org.json.JSONArray?): List<RouteStop> {
+    private fun parseStops(array: org.json.JSONArray?, top: String): List<RouteStop> {
         if (array == null) return emptyList()
         val rows = ArrayList<RouteStop>(array.length())
         for (i in 0 until array.length()) {
             val o = array.optJSONObject(i) ?: continue
             val lat = o.optDouble("lat", 0.0)
             val lng = o.optDouble("lng", 0.0)
-            if (!valid(lat, lng)) continue
+            if (!GeoDatum.valid(lat, lng)) continue
+            val p = GeoDatum.convert(lat, lng, GeoDatum.read(o, top))
             rows += RouteStop(
                 order = o.optInt("order", i + 1),
                 sId = o.optString("sId"),
                 name = o.optString("sn"),
-                lat = lat,
-                lng = lng
+                lat = p[0],
+                lng = p[1]
             )
         }
         return rows.sortedBy { it.order }
     }
 
-    private fun parseRoute(array: org.json.JSONArray?): List<GeoPoint> {
+    private fun parseRoute(array: org.json.JSONArray?, top: String): List<GeoPoint> {
         if (array == null) return emptyList()
         val rows = ArrayList<GeoPoint>(array.length())
         for (i in 0 until array.length()) {
             val o = array.optJSONObject(i) ?: continue
             val lat = o.optDouble("lat", 0.0)
             val lng = o.optDouble("lng", 0.0)
-            if (!valid(lat, lng)) continue
+            if (!GeoDatum.valid(lat, lng)) continue
             // route[] 本身是沿着线路的连续点；stopOrder 只标在少数点上，
             // 排序会把没有 stopOrder 的点全排到前面，画成乱线。
-            rows += GeoPoint(lat, lng)
+            val p = GeoDatum.convert(lat, lng, GeoDatum.read(o, top))
+            rows += GeoPoint(p[0], p[1])
         }
         return rows
     }
@@ -83,9 +86,4 @@ object LineRouteParser {
         }
         return out
     }
-
-    private fun valid(lat: Double, lng: Double): Boolean =
-        lat.isFinite() && lng.isFinite() &&
-            abs(lat) <= 90.0 && abs(lng) <= 180.0 &&
-            !(lat == 0.0 && lng == 0.0)
 }

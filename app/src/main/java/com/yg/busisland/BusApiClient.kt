@@ -64,12 +64,12 @@ object BusApiClient {
         return m
     }
 
-    /** 按经纬度反查城市（localCity） */
+    /** 按经纬度反查城市（localCity）；传入的是 GCJ-02（高德 / 常去地点）。 */
     fun localCity(lat: Double, lng: Double, udid: String): CityInfo? {
         val p = common(null, udid)
         p["lat"] = lat.toString()
         p["lng"] = lng.toString()
-        p["gpstype"] = "wgs"
+        p["gpstype"] = "gcj"
         val body = httpGet("https://$HOST/goocity/city/localCity?" + inflate(p))
         val jr = parseEnvelope(body)
         val c = jr.optJSONObject("data")?.optJSONObject("localCity") ?: return null
@@ -230,7 +230,10 @@ object BusApiClient {
         return android.util.Base64.encodeToString(iv + ct, android.util.Base64.NO_WRAP)
     }
 
-    /** 附近物理站点 */
+    /**
+     * 附近物理站点。传入 GCJ-02；响应顶层的 gpstype 实测为 wgs，
+     * 由 NearbyStationsParser 统一转回 GCJ 后再进入模型。
+     */
     fun nearStations(cityId: String, lat: Double, lng: Double, udid: String): List<NearbyStation> {
         val p = common(cityId, udid)
         // 实测：该接口只认明文 lat/lng/gpstype，encLoc 完全被忽略
@@ -241,20 +244,7 @@ object BusApiClient {
         p["encLoc"] = encLoc(lat, lng)
         val body = httpGet("https://$HOST/bus/stop!encryptedNearPhysicalStns.action?" + inflate(p))
         val jr = parseEnvelope(body)
-        val arr = jr.optJSONObject("data")?.optJSONArray("nearStations") ?: return emptyList()
-        return (0 until arr.length()).mapNotNull { i ->
-            val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            val sId = o.optString("sId")
-            if (sId.isBlank()) return@mapNotNull null
-            NearbyStation(
-                sId = sId,
-                physicalStId = o.optString("physicalStId"),
-                name = o.optString("sn"),
-                distance = o.optInt("distance", -1),
-                lat = o.optDouble("lat", 0.0),
-                lng = o.optDouble("lng", 0.0)
-            )
-        }.distinctBy { it.physicalStId.ifBlank { it.sId } }
+        return NearbyStationsParser.parse(jr.optJSONObject("data"))
     }
 
     /** 站点详情里的 stnStates[0] 直接带首班车到站时间，不用再查一次实时 */
@@ -339,7 +329,7 @@ object BusApiClient {
         if (lat != null && lng != null) {
             p["lat"] = lat.toString()
             p["lng"] = lng.toString()
-            p["gpstype"] = "wgs"
+            p["gpstype"] = "gcj"
         }
 
         val body = httpGet(cryptoUrl("/bus/line!encRefreshLineDetail.action", p))
@@ -359,34 +349,12 @@ object BusApiClient {
         }
         if (module == null) return RealTimeResult("", "", emptyList(), false, "无线路模块")
 
-        val line = module.optJSONObject("line")
-        val lineDesc = line?.optString("desc").orEmpty().ifBlank { line?.optString("shortDesc").orEmpty() }
-        val modulePre = module.optString("preArrivalTime").orEmpty()
-
-        val buses = mutableListOf<BusItem>()
-        val arr = module.optJSONArray("buses") ?: JSONArray()
-        for (i in 0 until arr.length()) {
-            val b = arr.optJSONObject(i) ?: continue
-            val eta = b.optString("arriveTime").ifBlank { b.optString("travelTime") }
-                .ifBlank { b.optString("preArrivalTime") }
-                .ifBlank { modulePre }
-            val dist = b.optInt("distanceToWaitStn", -1)
-            val etaText = normalizeEta(eta, dist)
-            buses.add(
-                BusItem(
-                    busId = b.optString("busId"),
-                    nextStation = b.optString("nextStationName"),
-                    distance = dist,
-                    etaText = etaText
-                )
-            )
-        }
-        return RealTimeResult(lineDesc, modulePre, buses, true)
+        return RealtimeParser.parse(module, sub.targetOrder)
     }
 
     /**
-     * 线路详情里的全部在线车辆。buses[].lat/lng 已是 GCJ-02，
-     * 可直接画在高德地图上；运营时间外返回空列表。
+     * 线路详情里的全部在线车辆。实测 buses[] 与 lineRoute 同为 WGS-84，
+     * 由 BusesParser 转成 GCJ-02 后再画到高德地图上；运营时间外返回空列表。
      */
     fun lineBuses(cityId: String, lineId: String, udid: String): List<BusPosition> {
         val p = common(cityId, udid)
@@ -394,69 +362,7 @@ object BusApiClient {
         p["lineId"] = lineId
         val body = httpGet(cryptoUrl("/bus/line!encryptedLineDetail.action", p))
         val jr = parseEnvelope(body)
-        val arr = jr.optJSONObject("data")?.optJSONArray("buses") ?: return emptyList()
-        val out = mutableListOf<BusPosition>()
-        for (i in 0 until arr.length()) {
-            val b = arr.optJSONObject(i) ?: continue
-            val lat = b.optDouble("lat", 0.0)
-            val lng = b.optDouble("lng", 0.0)
-            if (!lat.isFinite() || !lng.isFinite() || lat == 0.0 || lng == 0.0) continue
-            out += BusPosition(
-                busId = b.optString("busId"),
-                order = b.optInt("order", 0),
-                lat = lat,
-                lng = lng,
-                speed = b.optDouble("speed", 0.0),
-                nextStation = b.optString("nextStationName"),
-                distance = b.optInt("distanceToWaitStn", -1)
-            )
-        }
-        return out
+        return BusesParser.parse(jr.optJSONObject("data"))
     }
 
-    /**
-     * 到站文案统一成「时间」：接口给距离（米/公里）时按 15km/h 折算成分钟，
-     * 岛上不出现「距站 800m」「1.2 公里」这类数值。
-     */
-    private fun normalizeEta(eta: String, distMeters: Int): String {
-        val t = eta.trim()
-        // 1) 接口常给「预计到站时刻」如 22:03，换算成还剩几分钟
-        Regex("""^(\d{1,2}):(\d{2})$""").find(t)?.let { m ->
-            val h = m.groupValues[1].toInt()
-            val mi = m.groupValues[2].toInt()
-            if (h in 0..23 && mi in 0..59) {
-                val now = java.util.Calendar.getInstance()
-                val target = java.util.Calendar.getInstance().apply {
-                    set(java.util.Calendar.HOUR_OF_DAY, h)
-                    set(java.util.Calendar.MINUTE, mi)
-                    set(java.util.Calendar.SECOND, 0)
-                    set(java.util.Calendar.MILLISECOND, 0)
-                }
-                var diff = ((target.timeInMillis - now.timeInMillis) / 60_000L).toInt()
-                if (diff < -120) diff += 24 * 60
-                return when {
-                    diff <= 0 -> "即将到站"
-                    diff == 1 -> "1 分钟"
-                    else -> "$diff 分钟"
-                }
-            }
-        }
-        // 2) 已经是时间或状态文案，直接用
-        if (t.isNotEmpty() && Regex("分钟|秒|小时|即将|等待|未发车|停运").containsMatchIn(t)) return t
-
-        // 3) 距离 → 分钟
-        Regex("""([\d.]+)\s*(公里|km|KM)""").find(t)?.groupValues?.get(1)?.toDoubleOrNull()?.let { km ->
-            return "${minutesOf((km * 1000).toInt())} 分钟"
-        }
-        Regex("""(\d+)\s*(米|m|M)(?![a-zA-Z])""").find(t)?.groupValues?.get(1)?.toIntOrNull()?.let { m ->
-            return "${minutesOf(m)} 分钟"
-        }
-        if (t.isNotEmpty()) return t
-        if (distMeters > 0) return "${minutesOf(distMeters)} 分钟"
-        return "—"
-    }
-
-    /** 15km/h ≈ 250 米/分钟 */
-    private fun minutesOf(meters: Int): Int =
-        kotlin.math.ceil(meters / 250.0).toInt().coerceIn(1, 99)
 }

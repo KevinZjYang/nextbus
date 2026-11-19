@@ -122,10 +122,18 @@ class Prefs(ctx: Context) {
         get() = LineSub.listFromJson(sp.getString("lines", null))
         set(v) = sp.edit().putString("lines", LineSub.listToJson(v)).apply()
 
-    /** 已存在同一线路同一方向时返回 false。 */
-    fun addLine(sub: LineSub): Boolean {
+    /**
+     * 同线路同方向已存在时替换（更新上车站），返回 false；
+     * 不存在则追加，返回 true。
+     */
+    fun upsertLine(sub: LineSub): Boolean {
         val list = lines
-        if (list.any { it.lineId == sub.lineId && it.direction == sub.direction }) return false
+        val index = list.indexOfFirst { it.lineId == sub.lineId && it.direction == sub.direction }
+        if (index >= 0) {
+            list[index] = sub
+            lines = list
+            return false
+        }
         list.add(sub)
         lines = list
         return true

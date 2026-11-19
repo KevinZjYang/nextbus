@@ -1,6 +1,7 @@
 package com.yg.busisland
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -20,7 +21,8 @@ class NearbySelectorTest {
         lineId: String,
         direction: Int,
         eta: String = "",
-        lineNo: String = lineId
+        lineNo: String = lineId,
+        order: Int = 1
     ) = StationLine(
         sId = "s-$lineId-$direction",
         stationName = "站",
@@ -33,19 +35,25 @@ class NearbySelectorTest {
         firstTime = "06:00",
         lastTime = "22:00",
         stationsNum = 10,
-        order = 1,
+        order = order,
         etaText = eta
     )
 
-    private fun sub(lineId: String, direction: Int, station: String = "站") = LineSub(
+    private fun sub(
+        lineId: String,
+        direction: Int,
+        station: String = "站",
+        order: Int = 1,
+        stationId: String = "s-$lineId-$direction"
+    ) = LineSub(
         cityId = "027",
         lineId = lineId,
         lineName = lineId,
         lineNo = lineId,
         direction = direction,
-        targetOrder = 1,
+        targetOrder = order,
         stationName = station,
-        stationId = "s-$lineId-$direction",
+        stationId = stationId,
         place = ""
     )
 
@@ -126,6 +134,78 @@ class NearbySelectorTest {
         assertEquals(1, NearbySelector.etaMinutes("30 秒"))
         assertEquals(9999, NearbySelector.etaMinutes("—"))
         assertEquals(9999, NearbySelector.etaMinutes(""))
+    }
+
+    @Test
+    fun subscribedBoardingStationWinsOverNearestStation() {
+        val near = station("near", 50)
+        val far = station("far", 300, name = "远站")
+        val rows = NearbySelector.build(
+            stations = listOf(near, far),
+            linesByStation = mapOf(
+                near.sId to listOf(line("1", 0, order = 2)),
+                far.sId to listOf(line("1", 0, order = 9))
+            ),
+            subscriptions = listOf(
+                sub("1", 0, station = "远站", order = 9, stationId = "far")
+            )
+        )
+
+        assertEquals(1, rows.size)
+        val row = rows[0]
+        assertEquals("far", row.station.sId)
+        assertEquals("远站", row.boardingName)
+        assertEquals(300, row.boardingDistanceM)
+        assertTrue(row.boardingMatchesStation)
+    }
+
+    @Test
+    fun subscribedStationAwayFallsBackToNearestButKeepsSubscription() {
+        val near = station("near", 50)
+        val rows = NearbySelector.build(
+            stations = listOf(near),
+            linesByStation = mapOf(near.sId to listOf(line("1", 0))),
+            subscriptions = listOf(
+                sub("1", 0, station = "远站", order = 9, stationId = "elsewhere")
+            )
+        )
+
+        assertEquals(1, rows.size)
+        val row = rows[0]
+        assertEquals("near", row.station.sId)
+        assertEquals("远站", row.boardingName)
+        assertFalse(row.boardingMatchesStation)
+        assertEquals(-1, row.boardingDistanceM)
+        assertTrue(row.subscription != null)
+    }
+
+    @Test
+    fun matchesLegacySubscriptionByOrder() {
+        val st = station("s", 80)
+        val rows = NearbySelector.build(
+            stations = listOf(st),
+            linesByStation = mapOf(st.sId to listOf(line("1", 0, order = 4))),
+            subscriptions = listOf(
+                sub("1", 0, station = "旧站名", order = 4, stationId = "")
+            )
+        )
+        assertEquals(1, rows.size)
+        assertTrue(rows[0].boardingMatchesStation)
+        assertEquals(80, rows[0].boardingDistanceM)
+    }
+
+    @Test
+    fun matchesLegacySubscriptionByStationName() {
+        val st = station("s", 80, name = "天安门东")
+        val rows = NearbySelector.build(
+            stations = listOf(st),
+            linesByStation = mapOf(st.sId to listOf(line("1", 0, order = 0))),
+            subscriptions = listOf(
+                sub("1", 0, station = "天安门东", order = 0, stationId = "")
+            )
+        )
+        assertEquals(1, rows.size)
+        assertTrue(rows[0].boardingMatchesStation)
     }
 
     @Test

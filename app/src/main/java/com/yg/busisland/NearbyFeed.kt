@@ -20,13 +20,19 @@ data class NearbyData(
 data class NearbyLineRow(
     val station: NearbyStation,
     val line: StationLine,
-    val subscription: LineSub?
+    val subscription: LineSub?,
+    /** 上车站名：订阅站优先，否则就是当前站点。 */
+    val boardingName: String = station.name,
+    /** 当前站点是否就是订阅记录里的上车站。 */
+    val boardingMatchesStation: Boolean = true,
+    /** 上车站到当前位置的距离；订阅站不在附近时为 -1。 */
+    val boardingDistanceM: Int = station.distance
 )
 
 /**
  * 把「站点 → 线路」压平成首页列表：
- *  - 同一线路同方向只保留最近站点；
- *  - 订阅按 lineId + direction 匹配，不依赖地点；
+ *  - 订阅优先落在订阅记录里的上车站，而不是“最近站”；
+ *  - 其余同线路同方向只保留最近站点；
  *  - 订阅行置顶，其余按 ETA、距离、标题排序。
  */
 object NearbySelector {
@@ -49,15 +55,43 @@ object NearbySelector {
         }
 
         val picked = LinkedHashMap<Pair<String, Int>, NearbyLineRow>()
+
+        // 第一段：订阅记录指到哪一站，就把哪一站作为这一行的上车站。
+        // 这样即使订阅站比“最近站”远，距离/ETA 也不会指错地方。
+        for ((key, subs) in subsByKey) {
+            val sub = subs.firstOrNull() ?: continue
+            for (station in orderedStations) {
+                val line = linesByStation[station.sId].orEmpty().firstOrNull {
+                    it.lineId == key.first && it.direction == key.second &&
+                        stationMatches(sub, station, it)
+                } ?: continue
+                picked[key] = NearbyLineRow(
+                    station = station,
+                    line = line,
+                    subscription = sub,
+                    boardingName = sub.stationName.ifBlank { station.name },
+                    boardingMatchesStation = true,
+                    boardingDistanceM = station.distance
+                )
+                break
+            }
+        }
+
+        // 第二段：其余线路仍按最近站收一行；订阅站不在附近时也把订阅挂上，
+        // 保证置顶，但明确标记“当前站点不是上车站”。
         for (station in orderedStations) {
             for (line in linesByStation[station.sId].orEmpty()) {
                 if (line.lineId.isBlank()) continue
                 val key = line.lineId to line.direction
                 if (picked.containsKey(key)) continue
+                val sub = subsByKey[key]?.firstOrNull()
                 picked[key] = NearbyLineRow(
                     station = station,
                     line = line,
-                    subscription = subsByKey[key]?.firstOrNull()
+                    subscription = sub,
+                    boardingName = sub?.stationName?.ifBlank { station.name } ?: station.name,
+                    boardingMatchesStation = sub == null,
+                    boardingDistanceM = if (sub == null) station.distance else -1
                 )
             }
         }
@@ -73,6 +107,24 @@ object NearbySelector {
                 .thenBy { if (it.station.distance >= 0) it.station.distance else Int.MAX_VALUE }
                 .thenBy { it.line.title }
         ).take(maxRows)
+    }
+
+    /**
+     * 订阅记录是否指向这个站点：
+     * 有 stationId 就只认 id（兼容 sId / physicalStId / 线路里的 sId）；
+     * 老记录没 id 时按站序，再退到站名。
+     */
+    private fun stationMatches(sub: LineSub, station: NearbyStation, line: StationLine): Boolean {
+        if (sub.stationId.isNotBlank()) {
+            return sub.stationId == line.sId ||
+                sub.stationId == station.sId ||
+                sub.stationId == station.physicalStId
+        }
+        if (sub.targetOrder > 0 && line.order > 0) return sub.targetOrder == line.order
+        if (sub.stationName.isNotBlank()) {
+            return sub.stationName == station.name || sub.stationName == line.stationName
+        }
+        return false
     }
 
     /** 把「即将到站 / N 分钟 / N 秒 / —」变成可排序分钟数。 */

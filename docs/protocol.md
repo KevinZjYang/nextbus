@@ -126,6 +126,9 @@ GET /bus/line!lineRoute.action?lineId=<lineId>&lineName=<name>&<公共参数>
  "route":[{"stopOrder":1,"lat":..,"lng":..}]}
 ```
 
+坐标：顶层 `gpstype` 实测为 `"wgs"`，`stations[]` 每个点还自带 `gpsType:"wgs"`，
+`route[]` 同为 WGS-84。客户端应在解析边界统一转成 GCJ-02（见 6.5）。
+
 ### 6.3 实时到站（线路详情）
 
 ```
@@ -160,7 +163,8 @@ GET /bus/line!encRefreshLineDetail.action?<参数>&timeStamp=<ms>&cryptoSignStr=
 
 要点：
 - `buses` 空 + `line.desc = "不在运营时间"` / `line.state = -12` 属于正常（夜间）。
-- 到站时间字段在不同城市/时段可能为 `arriveTime`、`travelTime` 或模块级 `preArrivalTime`（人类可读，如 `"3分钟"`），客户端应做多字段兜底。
+- 到站时间优先取每辆车 `travels[]` 中 `order == targetOrder` 的那一条：`arrivalTime`（毫秒）、`travelTime`（秒，通常是从车辆当前位置到目标站的耗时）、`recommTip`（`HH:mm`）。顶层 `arriveTime/travelTime/recommTip` 只作兜底；`preArrivalTime` 是人类可读文案。
+- 客户端 `RealtimeParser` 只保留 `order <= targetOrder` 的车（已过目标站的丢弃），按 ETA 升序排序；`travels` 缺失时才退回顶层字段。
 - 传 `lat/lng/gpstype`（GCJ）可让服务端返回基于当前位置的排序；不传也能用。
 
 ### 6.4 其他可用接口（同公共参数）
@@ -174,6 +178,40 @@ GET /bus/line!encRefreshLineDetail.action?<参数>&timeStamp=<ms>&cryptoSignStr=
 | `/bus/line!summary.action` | 发车时刻表 |
 | `/bus/line!busList.action` | 时间表 |
 | `/goocity/config/notices` | 公告 |
+
+### 6.5 坐标系（实测）
+
+chelaile 的公交数据接口返回 **WGS-84**，高德底图/高德定位使用 **GCJ-02**。
+客户端约定：**请求出口声明 gcj，响应解析入口归一为 GCJ**；模型、缓存、地图只存 GCJ。
+
+| 接口 | 响应坐标系 | 请求坐标 |
+|---|---|---|
+| `/bus/line!lineRoute.action` | 顶层 `gpstype:"wgs"`，`stations[].gpsType:"wgs"`，`route[]` 同为 wgs | 不传坐标 |
+| `/bus/stop!encryptedNearPhysicalStns.action` | 顶层 `gpstype` 恒为 `"wgs"`（`userLat/userLng` 为 -1） | 明文 `lat/lng` + `gpstype=gcj`；实测 `encLoc` 被忽略 |
+| `/bus/stop!encryptedPhyStnDetail.action` | 站点 `lat/lng` 为 wgs；`targetStation.order` 与 lineRoute 的 `order` 一致 | `physicalStId` + `encLoc`（内部 `gpstype=gcj`） |
+| `/bus/line!encryptedLineDetail.action` | 解密后的 `data` **没有 gpstype 字段**；`buses[].lat/lng` 与 lineRoute 同为 wgs | `localCityId` + `lineId` |
+| `/goocity/city/localCity` | 城市中心点 | 客户端传 GCJ，必须用 `gpstype=gcj`（传 wgs 会偏约 550m） |
+| `/bus/line!encRefreshLineDetail.action` | 明文 `modules[]` | 若传坐标，用 `gpstype=gcj` |
+
+几何验证（北京夜 1，`010-夜1-0`，`lineRoute` 490 个 wgs 点）：
+
+- bus `4742410287`（39.906185,116.279239）：raw bus → raw route 最近距离 **0.0 m**；
+  转 GCJ 后再量 = **136.6 m**。
+- bus `4742410386`（39.906917,116.419852）：raw → route **1.1 m**；转 GCJ = **140.3 m**。
+
+→ `buses[]` 是 WGS-84。若把原始值直接画到 GCJ 高德底图上，车辆会恒定偏移约
+137~300m（乌鲁木齐等西部城市更大），看起来“完全不在线路上”。
+
+原 App 证据（`build/src6/sources/`）：
+
+- `dev/xesam/chelaile/sdk/query/api/LineRouteData.java:7-8`：`gpsType` 默认 `GeoType.WGS`。
+- `dev/xesam/chelaile/sdk/query/api/BusesData.java:35-36`：`gpsType` 默认 `GeoType.WGS`。
+- `dev/xesam/chelaile/sdk/ToUrlStringUtil.java:19-25`：上传位置前 `getGeoPoint().getGcj()`，并 `gpstype=gcj`。
+- `dev/xesam/chelaile/app/module/map/MapUtils.java:10-13`：画高德前统一 `getGeoPoint().getGcj()`。
+
+客户端实现：`GeoDatum.kt`（读 `gpstype`/`gpsType`，缺省 wgs）、
+`BusesParser.kt`、`NearbyStationsParser.kt`、`LineRouteParser.kt` 在解析时转换；
+`LocationFix.fromWgs` 把系统定位转 GCJ；`AmapLocator` 的结果视为 GCJ。
 
 ---
 

@@ -1,9 +1,12 @@
 package com.yg.busisland
 
 /**
- * 高德底图使用 GCJ-02，而线路/站点接口返回的是 WGS-84。
+ * 高德底图和高德定位使用 GCJ-02；系统 LocationManager 以及 chelaile 的
+ * 线路/站点/车辆接口返回 WGS-84（响应里的 gpstype 实测为 wgs）。
+ *
+ * 本项目只在“接口解析边界”做一次 WGS→GCJ 转换（见 GeoDatum / 各 Parser），
+ * 模型、缓存、地图统一使用 GCJ-02，不再在绘制时二次转换。
  * 直接把 WGS-84 画到高德上会整体向西南偏约 250~300m，看起来像跑进小区。
- * 这里只在“地图显示”边界做一次转换，不改接口数据和业务模型。
  */
 object Gcj {
 

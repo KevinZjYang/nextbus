@@ -166,13 +166,22 @@ data class CityInfo(
     val pinyin: String = ""
 )
 
-data class BusItem(    val busId: String,
+data class BusItem(
+    val busId: String,
     val nextStation: String,
     val distance: Int,
-    val etaText: String
+    val etaText: String,
+    /** 预计到站分钟数；未知为 -1。 */
+    val etaMinutes: Int = -1,
+    /** 接口给的预计到站时刻，如 02:26。 */
+    val clock: String = "",
+    /** 车辆当前站序，用于过滤已经过站的车辆。 */
+    val order: Int = 0,
+    val lat: Double = 0.0,
+    val lng: Double = 0.0
 )
 
-/** 线路上正在运行的车辆（encryptedLineDetail 的 buses[]，坐标为 GCJ-02）。 */
+/** 线路上正在运行的车辆（encryptedLineDetail 的 buses[]；BusesParser 已转成 GCJ-02）。 */
 data class BusPosition(
     val busId: String,
     val order: Int,
@@ -188,5 +197,12 @@ data class RealTimeResult(
     val preArrival: String,
     val buses: List<BusItem>,
     val ok: Boolean,
-    val message: String = ""
-)
+    val message: String = "",
+    /** 本次查询的目标站序。 */
+    val targetOrder: Int = 0,
+    /** 停运时的首班提示等。 */
+    val nextOperationDesc: String = ""
+) {
+    /** 最快到站的一辆；没有实时车辆时为 null。 */
+    fun firstBus(): BusItem? = buses.firstOrNull()
+}

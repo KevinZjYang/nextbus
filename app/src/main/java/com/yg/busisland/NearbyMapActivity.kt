@@ -57,6 +57,7 @@ class NearbyMapActivity : PageActivity() {
     companion object {
         const val EXTRA_LINE_ID = "line_id"
         const val EXTRA_DIRECTION = "direction"
+        const val EXTRA_TARGET_ORDER = "target_order"
 
         private const val MAP_LOAD_TIMEOUT_MS = 8_000L
         private const val LIVE_REFRESH_MS = 15_000L
@@ -81,13 +82,19 @@ class NearbyMapActivity : PageActivity() {
     private var liveBusStatus = ""
     private var liveBusLoading = false
     private var liveBusRequest = 0
+    private var liveEta: RealTimeResult? = null
+    private var liveEtaByBus: Map<String, BusItem> = emptyMap()
+    private var liveEtaStatus = ""
+    private var liveEtaLoading = false
+    private var liveEtaRequest = 0
     private var labelsHidden = false
     private val liveTick = object : Runnable {
         override fun run() {
             if (isFinishing || isDestroyed) return
             val row = selectedRow()
-            if (row != null && mapReady && !loading && !routeLoading && !liveBusLoading) {
-                loadLiveBus(row)
+            if (row != null && mapReady && !loading && !routeLoading) {
+                if (!liveBusLoading) loadLiveBus(row)
+                if (!liveEtaLoading) loadLiveEta(row)
             }
             main.postDelayed(this, LIVE_REFRESH_MS)
         }
@@ -436,6 +443,26 @@ class NearbyMapActivity : PageActivity() {
 
     private fun key(row: NearbyLineRow): String = "${row.line.lineId}:${row.line.direction}"
 
+    private fun targetOrderFor(row: NearbyLineRow?): Int {
+        if (row == null) return 0
+        val extraOrder = intent.getIntExtra(EXTRA_TARGET_ORDER, 0)
+        val extraLine = intent.getStringExtra(EXTRA_LINE_ID)
+        val extraDirection = intent.getIntExtra(EXTRA_DIRECTION, -1)
+        if (extraOrder > 0 && row.line.lineId == extraLine && row.line.direction == extraDirection) {
+            return extraOrder
+        }
+        val sub = row.subscription
+        if (sub != null) {
+            if (sub.targetOrder > 0) return sub.targetOrder
+            val stops = selectedRoute?.stops.orEmpty()
+            stops.firstOrNull { sub.stationId.isNotBlank() && it.sId == sub.stationId }
+                ?.let { return it.order }
+            stops.firstOrNull { sub.stationName.isNotBlank() && it.name == sub.stationName }
+                ?.let { return it.order }
+        }
+        return row.line.order
+    }
+
     private fun selectedRow(): NearbyLineRow? =
         rows.firstOrNull { key(it) == selectedKey }
 
@@ -456,6 +483,7 @@ class NearbyMapActivity : PageActivity() {
             rows.firstOrNull()?.let {
                 loadRoute(it)
                 loadLiveBus(it)
+                loadLiveEta(it)
             }
         } else {
             val cached = routeCache[selectedKey]
@@ -467,6 +495,7 @@ class NearbyMapActivity : PageActivity() {
                 loadRoute(current)
             }
             loadLiveBus(current)
+            loadLiveEta(current)
         }
         renderPanel()
         drawAll()
@@ -487,6 +516,10 @@ class NearbyMapActivity : PageActivity() {
         liveBus = null
         liveBusStatus = ""
         liveBusLoading = false
+        liveEta = null
+        liveEtaByBus = emptyMap()
+        liveEtaStatus = ""
+        liveEtaLoading = false
         labelsHidden = false
         if (selectedRoute == null) {
             loadRoute(row)
@@ -495,6 +528,7 @@ class NearbyMapActivity : PageActivity() {
             drawAll()
         }
         loadLiveBus(row)
+        loadLiveEta(row)
         fitNearby(false)
     }
 
@@ -564,7 +598,7 @@ class NearbyMapActivity : PageActivity() {
         val r = selectedRoute
         routePoints = r?.points.orEmpty()
         if (r != null && r.points.size >= 2) {
-            val points = r.points.map { gcj(it.lat, it.lng) }
+            val points = r.points.map { LatLng(it.lat, it.lng) }
             m.addPolyline(
                 PolylineOptions()
                     .addAll(points)
@@ -582,7 +616,7 @@ class NearbyMapActivity : PageActivity() {
         }
 
         val row = selectedRow()
-        val targetOrder = row?.line?.order ?: 0
+        val targetOrder = targetOrderFor(row)
         val stops = r?.stops.orEmpty()
         if (stops.isNotEmpty()) {
             stops.forEach { stop ->
@@ -603,16 +637,17 @@ class NearbyMapActivity : PageActivity() {
                     lat = row.station.lat,
                     lng = row.station.lng
                 ),
-                target = true
+                target = row.boardingMatchesStation
             )
         }
 
         liveBus?.let { bus ->
             if (!valid(bus.lat, bus.lng)) return@let
+            val eta = liveEtaByBus[bus.busId]
             m.addMarker(
                 MarkerOptions()
                     .position(LatLng(bus.lat, bus.lng))
-                    .title("最近公交")
+                    .title(if (eta != null) "最近公交 · ${eta.etaText}" else "最近公交")
                     .snippet(bus.nextStation.ifBlank { "运行中" })
                     .icon(busIcon())
                     .zIndex(9f)
@@ -629,7 +664,7 @@ class NearbyMapActivity : PageActivity() {
     }
 
     private fun addStopMarker(m: AMap, stop: RouteStop, target: Boolean) {
-        val pos = gcj(stop.lat, stop.lng)
+        val pos = LatLng(stop.lat, stop.lng)
         val marker = m.addMarker(
             MarkerOptions()
                 .position(pos)
@@ -715,7 +750,7 @@ class NearbyMapActivity : PageActivity() {
         labelsHidden = true
         applyLabelVisibility()
         val builder = LatLngBounds.Builder()
-        routePoints.forEach { builder.include(gcj(it.lat, it.lng)) }
+        routePoints.forEach { builder.include(LatLng(it.lat, it.lng)) }
         m.animateCamera(CameraUpdateFactory.newLatLngBounds(builder.build(), dp(70)))
     }
 
@@ -768,11 +803,42 @@ class NearbyMapActivity : PageActivity() {
             }
             append("第 ").append(stop.order).append(" 站")
         }
-        AlertDialog.Builder(this)
+        val builder = AlertDialog.Builder(this)
             .setTitle(stop.name)
             .setMessage(message)
-            .setPositiveButton("知道了", null)
-            .show()
+            .setNegativeButton("知道了", null)
+        if (row != null && stop.order > 0 && stop.sId.isNotBlank()) {
+            builder.setPositiveButton("设为上车站") { _, _ -> setBoarding(row, stop) }
+        }
+        builder.show()
+    }
+
+    /** 从地图站点点选上车站，写回订阅（同线路同方向覆盖）。 */
+    private fun setBoarding(row: NearbyLineRow, stop: RouteStop) {
+        val d = data ?: return
+        if (stop.order <= 0 || stop.sId.isBlank()) {
+            toast("这一站缺少站序，无法设为上车站")
+            return
+        }
+        val line = row.line
+        prefs.upsertLine(
+            LineSub(
+                cityId = d.cityId.ifBlank { prefs.cityId },
+                lineId = line.lineId,
+                lineName = line.lineName,
+                lineNo = line.lineNo,
+                direction = line.direction,
+                targetOrder = stop.order,
+                stationName = stop.name,
+                stationId = stop.sId,
+                place = "",
+                startSn = line.startSn,
+                endSn = line.endSn
+            )
+        )
+        rebuildRows()
+        drawAll()
+        toast("上车站已设为：${stop.name}")
     }
 
     private fun loadLiveBus(row: NearbyLineRow) {
@@ -812,6 +878,57 @@ class NearbyMapActivity : PageActivity() {
         }
     }
 
+    private fun loadLiveEta(row: NearbyLineRow) {
+        val d = data ?: return
+        if (liveEtaLoading) return
+        val city = d.cityId.ifBlank { prefs.cityId }
+        val order = targetOrderFor(row)
+        if (city.isBlank() || order <= 0) {
+            liveEta = null
+            liveEtaByBus = emptyMap()
+            liveEtaStatus = ""
+            return
+        }
+        val k = key(row)
+        val id = ++liveEtaRequest
+        liveEtaLoading = true
+        liveEtaStatus = "下一班查询中…"
+        renderPanel()
+        val sub = LineSub(
+            cityId = city,
+            lineId = row.line.lineId,
+            lineName = row.line.lineName,
+            lineNo = row.line.lineNo,
+            direction = row.line.direction,
+            targetOrder = order,
+            stationName = row.boardingName.ifBlank { row.line.stationName },
+            stationId = row.line.sId.ifBlank { row.station.sId },
+            place = "",
+            startSn = row.line.startSn,
+            endSn = row.line.endSn
+        )
+        liveExecutor.execute {
+            val result = runCatching {
+                BusApiClient.realtime(sub, prefs.udid, d.lat, d.lng)
+            }
+            main.post {
+                if (id != liveEtaRequest || selectedKey != k || isFinishing || isDestroyed) return@post
+                liveEtaLoading = false
+                result.onSuccess {
+                    liveEta = it
+                    liveEtaByBus = it.buses.associateBy { b -> b.busId }
+                    liveEtaStatus = ""
+                }.onFailure { e ->
+                    liveEta = null
+                    liveEtaByBus = emptyMap()
+                    liveEtaStatus = "下一班查询失败：${e.message ?: "未知错误"}"
+                }
+                drawAll()
+                renderPanel()
+            }
+        }
+    }
+
     private fun distanceMeters(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
         val r = 6_371_000.0
         val dLat = Math.toRadians(lat2 - lat1)
@@ -831,27 +948,38 @@ class NearbyMapActivity : PageActivity() {
         val d = data ?: return
         val line = row.line
         val station = row.station
+        val existing = prefs.lines.firstOrNull {
+            it.lineId == line.lineId && it.direction == line.direction
+        }
+        if (existing != null) {
+            toast("已订阅：${existing.stationName}（可在详情页修改）")
+            return
+        }
+        if (line.order <= 0 || line.sId.isBlank()) {
+            toast("这一站缺少站序，请从线路详情里选择上车站")
+            return
+        }
         val sub = LineSub(
             cityId = d.cityId,
             lineId = line.lineId,
             lineName = line.lineName,
             lineNo = line.lineNo,
             direction = line.direction,
-            targetOrder = line.order.coerceAtLeast(1),
+            targetOrder = line.order,
             stationName = line.stationName.ifBlank { station.name },
             stationId = line.sId.ifBlank { station.sId },
             place = "",
             startSn = line.startSn,
             endSn = line.endSn
         )
-        toast(if (prefs.addLine(sub)) "已订阅，已置顶" else "已订阅")
+        toast(if (prefs.upsertLine(sub)) "已订阅，已置顶" else "已更新上车站")
         rebuildRows()
     }
 
     private fun toggle(row: NearbyLineRow) {
         val sub = row.subscription ?: return
         AlertDialog.Builder(this)
-            .setTitle("${sub.title} · ${row.station.name}")
+            .setTitle("${sub.title} · ${row.boardingName}")
             .setMessage("取消订阅这条线路？")
             .setPositiveButton("取消订阅") { _, _ ->
                 prefs.removeLine(sub.lineId, sub.direction)
@@ -903,6 +1031,21 @@ class NearbyMapActivity : PageActivity() {
 
     // ------------------------------------------------------------ 底部面板
 
+    private fun panelEtaText(row: NearbyLineRow): String {
+        if (!row.boardingMatchesStation) return "上车站不在附近"
+        val result = liveEta
+        val bus = result?.firstBus()
+        return when {
+            liveEtaLoading && result == null -> "下一班查询中…"
+            result != null && !result.ok -> "下一班查询失败"
+            bus != null -> "下一班 ${bus.etaText}"
+            result != null && (result.lineDesc.contains("不在运营") ||
+                result.lineDesc.contains("停运")) -> "停运"
+            result != null -> "暂无下一班"
+            else -> row.line.etaText.ifBlank { "—" }
+        }
+    }
+
     private fun renderPanel() {
         val d = data
         topSubtitle.text = if (d == null) {
@@ -928,10 +1071,14 @@ class NearbyMapActivity : PageActivity() {
             val sub = row.subscription
             detailTitle.text = (if (sub != null) "★ " else "") + row.line.title
             detailMeta.text = buildString {
-                append(row.station.name)
-                if (row.station.distance >= 0) append(" · ").append(row.station.distance).append("m")
+                append(row.boardingName)
+                if (row.boardingDistanceM >= 0) {
+                    append(" · ").append(row.boardingDistanceM).append("m")
+                }
                 if (row.line.towards.isNotBlank()) append(" · ").append(row.line.towards)
-                append(" · ").append(row.line.etaText.ifBlank { "—" })
+                append(" · ").append(panelEtaText(row))
+                val busCount = liveEta?.buses?.size ?: 0
+                if (busCount > 0) append(" · ").append(busCount).append(" 辆车")
             }
             subscribeButton.text = if (sub == null) "订阅线路" else "取消订阅"
             subscribeButton.backgroundTintList = ColorStateList.valueOf(
@@ -986,6 +1133,7 @@ class NearbyMapActivity : PageActivity() {
         val statusParts = buildList {
             if (routeStatus.isNotBlank()) add(routeStatus)
             if (liveBusStatus.isNotBlank()) add(liveBusStatus)
+            if (liveEtaStatus.isNotBlank()) add(liveEtaStatus)
         }
         statusView.text = when {
             loading -> "刷新中…"
@@ -1038,11 +1186,6 @@ class NearbyMapActivity : PageActivity() {
     }
 
     // ------------------------------------------------------------ 小工具
-
-    private fun gcj(lat: Double, lng: Double): LatLng {
-        val p = Gcj.toGcj(lat, lng)
-        return LatLng(p[0], p[1])
-    }
 
     private fun valid(lat: Double, lng: Double): Boolean =
         lat.isFinite() && lng.isFinite() &&

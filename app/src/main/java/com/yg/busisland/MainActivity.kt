@@ -3,10 +3,10 @@ package com.yg.busisland
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.location.Location
-import android.location.LocationManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
@@ -24,6 +24,7 @@ import com.yg.busisland.ui.PageScaffold
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 
 /**
  * 首页：打开即定位，直接列附近线路；订阅行置顶。
@@ -34,11 +35,37 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
     companion object {
         private const val REQ_LOCATION = 100
         private const val FRESH_MS = 30_000L
+        private const val ETA_REFRESH_MS = 20_000L
     }
 
     private lateinit var prefs: Prefs
     private lateinit var page: PageScaffold
     private val loader = NearbyLoader()
+
+    // 首页「下一班」：选一条订阅线路（优先已设置上车站的），20 秒刷新。
+    private val etaExecutor = Executors.newSingleThreadExecutor()
+    private val etaHandler = Handler(Looper.getMainLooper())
+    private var etaSub: LineSub? = null
+    private var etaResult: RealTimeResult? = null
+    private var etaError: String? = null
+    private var etaLoading = false
+    private var etaKey = ""
+    private var etaRequest = 0
+    private var etaFetchedAt = 0L
+    private var etaFetchedWall = 0L
+
+    private var etaLineView: TextView? = null
+    private var etaStationView: TextView? = null
+    private var etaBigView: TextView? = null
+    private var etaMetaView: TextView? = null
+    private var etaStateView: TextView? = null
+
+    private val etaTick = object : Runnable {
+        override fun run() {
+            fetchEta(force = true)
+            etaHandler.postDelayed(this, ETA_REFRESH_MS)
+        }
+    }
 
     private var loading = false
     private var phase = "定位中…"
@@ -69,12 +96,21 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
     override fun onResume() {
         super.onResume()
         render()
+        etaHandler.removeCallbacks(etaTick)
+        etaHandler.postDelayed(etaTick, 800)
         if (!started || loading) return
         val stale = data == null || SystemClock.elapsedRealtime() - lastLoadAt >= FRESH_MS
         if (stale) maybeStart()
     }
 
+    override fun onPause() {
+        etaHandler.removeCallbacks(etaTick)
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        etaHandler.removeCallbacksAndMessages(null)
+        etaExecutor.shutdownNow()
         loader.close()
         super.onDestroy()
     }
@@ -121,47 +157,34 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
         val id = ++requestId
         render()
 
-        AmapLocator.once(this, 8_000) { loc ->
-            if (id != requestId || isFinishing || isDestroyed) return@once
-            if (loc != null) {
+        LocationProvider.best(this) { fix ->
+            if (id != requestId || isFinishing || isDestroyed) return@best
+            if (fix != null) {
                 startQuery(
-                    lat = loc.latitude,
-                    lng = loc.longitude,
-                    label = "当前位置",
-                    accuracy = loc.accuracy,
+                    lat = fix.lat,
+                    lng = fix.lng,
+                    label = labelFor(fix),
+                    accuracy = fix.accuracyM,
                     autoCity = true,
                     cityId = null,
                     id = id
                 )
             } else {
-                val last = lastKnown()
-                if (last != null) {
+                val place = firstValidPlace()
+                if (place != null) {
                     startQuery(
-                        lat = last.latitude,
-                        lng = last.longitude,
-                        label = "系统定位",
-                        accuracy = last.accuracy,
-                        autoCity = true,
-                        cityId = null,
+                        lat = place.lat,
+                        lng = place.lng,
+                        label = place.name.ifBlank { "地点" } + "（缓存）",
+                        accuracy = -1f,
+                        autoCity = place.cityId.isBlank(),
+                        cityId = place.cityId.ifBlank { null },
                         id = id
                     )
                 } else {
-                    val place = firstValidPlace()
-                    if (place != null) {
-                        startQuery(
-                            lat = place.lat,
-                            lng = place.lng,
-                            label = place.name.ifBlank { "地点" } + "（缓存）",
-                            accuracy = -1f,
-                            autoCity = place.cityId.isBlank(),
-                            cityId = place.cityId.ifBlank { null },
-                            id = id
-                        )
-                    } else {
-                        loading = false
-                        lastError = "定位失败，请检查系统定位或去设置选城市"
-                        render()
-                    }
+                    loading = false
+                    lastError = "定位失败，请检查系统定位或去设置选城市"
+                    render()
                 }
             }
         }
@@ -245,18 +268,233 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
 
+    private fun hasFineLocation(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun labelFor(fix: LocationFix): String = when {
+        !hasFineLocation() -> "大致位置"
+        fix.source == LocationFix.Source.SYSTEM -> "系统定位"
+        else -> "当前位置"
+    }
+
     private fun firstValidPlace(): Place? = prefs.places.firstOrNull { it.valid }
 
-    private fun lastKnown(): Location? {
-        val mgr = getSystemService(LOCATION_SERVICE) as? LocationManager ?: return null
-        return listOf(
-            "fused",
-            LocationManager.NETWORK_PROVIDER,
-            LocationManager.GPS_PROVIDER
-        ).mapNotNull { provider ->
-            runCatching { mgr.getLastKnownLocation(provider) }.getOrNull()
-        }.maxByOrNull { it.time }
+    // ------------------------------------------------------------ 下一班
+
+    private fun primaryEtaSub(): LineSub? {
+        val lines = prefs.lines
+        return lines.firstOrNull { it.targetOrder > 0 && it.stationId.isNotBlank() }
+            ?: lines.firstOrNull()
     }
+
+    private fun etaKeyOf(sub: LineSub): String =
+        "${sub.cityId}|${sub.lineId}|${sub.direction}|${sub.targetOrder}|${sub.stationId}"
+
+    private fun fetchEta(force: Boolean) {
+        val sub = primaryEtaSub()
+        if (sub == null) {
+            etaSub = null
+            etaResult = null
+            etaError = null
+            etaLoading = false
+            etaKey = ""
+            etaFetchedWall = 0L
+            refreshEtaCard()
+            return
+        }
+        val key = etaKeyOf(sub)
+        if (!force && etaKey == key &&
+            SystemClock.elapsedRealtime() - etaFetchedAt < ETA_REFRESH_MS
+        ) return
+        if (etaLoading && etaKey == key) return
+
+        if (etaKey != key) {
+            etaResult = null
+            etaFetchedWall = 0L
+        }
+        etaKey = key
+        etaSub = sub
+        etaError = null
+        if (sub.targetOrder <= 0) {
+            etaLoading = false
+            etaResult = null
+            etaFetchedWall = 0L
+            refreshEtaCard()
+            return
+        }
+
+        etaLoading = true
+        refreshEtaCard()
+        val id = ++etaRequest
+        val lat = data?.lat
+        val lng = data?.lng
+        val udid = prefs.udid
+        etaExecutor.execute {
+            val result = runCatching { BusApiClient.realtime(sub, udid, lat, lng) }
+            runOnUiThread {
+                if (id != etaRequest || isFinishing || isDestroyed) return@runOnUiThread
+                etaLoading = false
+                result.onSuccess {
+                    etaResult = it
+                    etaError = null
+                    etaFetchedAt = SystemClock.elapsedRealtime()
+                    etaFetchedWall = System.currentTimeMillis()
+                }.onFailure {
+                    etaError = it.message ?: "实时到站查询失败"
+                }
+                refreshEtaCard()
+            }
+        }
+    }
+
+    private fun renderNextBus() {
+        val sub = primaryEtaSub()
+        page.section("下一班")
+        val card = page.card()
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(12))
+            val out = android.util.TypedValue()
+            theme.resolveAttribute(android.R.attr.selectableItemBackground, out, true)
+            setBackgroundResource(out.resourceId)
+            isClickable = true
+            setOnClickListener {
+                val current = primaryEtaSub() ?: return@setOnClickListener
+                LineDetailSheet.show(this@MainActivity, LineDetailTarget.from(current)) {
+                    fetchEta(force = true)
+                    render()
+                }
+            }
+        }
+        val topRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val left = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        }
+        val lineView = TextView(this).apply {
+            textSize = 17f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(attrColor(com.google.android.material.R.attr.colorOnSurface))
+        }
+        etaLineView = lineView
+        val stationView = TextView(this).apply {
+            textSize = 12.5f
+            setTextColor(attrColor(com.google.android.material.R.attr.colorOnSurfaceVariant))
+            setPadding(0, dp(3), 0, 0)
+        }
+        etaStationView = stationView
+        val bigView = TextView(this).apply {
+            textSize = 30f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(attrColor(com.google.android.material.R.attr.colorPrimary))
+            gravity = Gravity.END
+            maxLines = 1
+            setPadding(dp(12), 0, 0, 0)
+        }
+        etaBigView = bigView
+        left.addView(lineView)
+        left.addView(stationView)
+        topRow.addView(left)
+        topRow.addView(bigView, LinearLayout.LayoutParams(-2, -2))
+        body.addView(topRow)
+
+        val metaView = TextView(this).apply {
+            textSize = 12f
+            setTextColor(attrColor(com.google.android.material.R.attr.colorOnSurfaceVariant))
+            maxLines = 2
+            setPadding(0, dp(6), 0, 0)
+        }
+        etaMetaView = metaView
+        body.addView(metaView)
+
+        val stateView = TextView(this).apply {
+            textSize = 11f
+            setTextColor(attrColor(com.google.android.material.R.attr.colorOnSurfaceVariant))
+            setPadding(0, dp(3), 0, 0)
+        }
+        etaStateView = stateView
+        body.addView(stateView)
+        card.addView(body)
+
+        if (sub == null) {
+            page.hint("订阅线路后，这里会显示下一班还有几分钟。")
+        } else if (sub.targetOrder <= 0 || sub.stationId.isBlank()) {
+            page.hint("这条线路还没有上车站，点卡片选择后就能看到倒计时。")
+        }
+
+        refreshEtaCard()
+        if (sub != null && etaKeyOf(sub) != etaKey) {
+            fetchEta(force = true)
+        }
+    }
+
+    private fun refreshEtaCard() {
+        val lineView = etaLineView ?: return
+        val sub = etaSub ?: primaryEtaSub()
+        if (sub == null) {
+            lineView.text = "还没有订阅线路"
+            etaStationView?.text = "点下面「订阅线路」添加常坐线路"
+            etaBigView?.text = "—"
+            etaMetaView?.text = ""
+            etaStateView?.text = ""
+            return
+        }
+        lineView.text = sub.title
+        etaStationView?.text = "上车站 · " + sub.stationName.ifBlank { "未设置" }
+
+        val result = etaResult
+        val bus = result?.firstBus()
+        val big = when {
+            sub.targetOrder <= 0 || sub.stationId.isBlank() -> "—"
+            etaLoading && result == null -> "…"
+            etaError != null && result == null -> "失败"
+            bus != null -> bus.etaText
+            result != null && (result.lineDesc.contains("不在运营") ||
+                result.lineDesc.contains("停运")) -> "停运"
+            result != null -> "暂无车"
+            else -> "…"
+        }
+        etaBigView?.text = big
+
+        etaMetaView?.text = when {
+            bus != null -> buildString {
+                if (bus.clock.isNotBlank()) append("预计 ").append(bus.clock)
+                val second = result.buses.getOrNull(1)
+                if (second != null) {
+                    if (isNotEmpty()) append(" · ")
+                    append("后一班 ").append(second.etaText)
+                }
+                if (bus.distance > 0) {
+                    if (isNotEmpty()) append(" · ")
+                    append("距站 ").append(metersText(bus.distance))
+                }
+                if (isNotEmpty()) append(" · ")
+                append(result.buses.size).append(" 辆车")
+            }
+            sub.targetOrder <= 0 || sub.stationId.isBlank() -> "先选上车站"
+            result != null && result.lineDesc.isNotBlank() -> result.lineDesc
+            !result?.nextOperationDesc.isNullOrBlank() -> result.nextOperationDesc
+            etaError != null -> etaError.orEmpty()
+            else -> "正在查实时到站…"
+        }
+
+        etaStateView?.text = when {
+            etaError != null -> "查询失败，20 秒后重试"
+            etaFetchedWall > 0 -> "更新 ${clockText(etaFetchedWall)} · 20 秒自动刷新"
+            else -> "20 秒自动刷新"
+        }
+    }
+
+    private fun metersText(meters: Int): String =
+        if (meters < 1000) "${meters}m"
+        else String.format(Locale.getDefault(), "%.1fkm", meters / 1000.0)
+
+    private fun clockText(at: Long): String =
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(at))
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
@@ -279,6 +517,7 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
     private fun render() {
         page.clearBody()
         renderStatus()
+        renderNextBus()
 
         val d = data
         val rows = if (d != null) {
@@ -299,7 +538,7 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
                 val row = pinnedByKey[sub.lineId to sub.direction]
                 if (row != null) {
                     NearbyLineRowView.add(
-                        card, row.line, row.station.name, row.station.distance, true
+                        card, row.line, row.boardingName, row.boardingDistanceM, true
                     ) {
                         LineDetailSheet.show(
                             this,
@@ -335,7 +574,7 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
             val card = page.card()
             nearby.forEach { row ->
                 NearbyLineRowView.add(
-                    card, row.line, row.station.name, row.station.distance, false
+                    card, row.line, row.boardingName, row.boardingDistanceM, false
                 ) {
                     LineDetailSheet.show(
                         this,
@@ -405,6 +644,7 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
                 append("${d.stations.size} 个站点 · $count 条线路")
                 if (d.partial) append(" · 部分站点加载失败")
                 append(" · 更新 ").append(timeText(d.fetchedAt))
+                if (accuracy > LocationFix.COARSE_ACCURACY_M) append(" · 定位较粗，站点可能不准")
                 if (!lastError.isNullOrBlank()) append(" · 上次失败：").append(lastError)
             }
             !hasLocationPermission() -> "开启定位后，打开 App 会自动查询附近公交"
@@ -446,6 +686,16 @@ class MainActivity : com.yg.busisland.ui.PageActivity() {
         }
         row.addView(refresh, LinearLayout.LayoutParams(-2, dp(40)))
         card.addView(row)
+
+        if (hasLocationPermission() && !hasFineLocation()) {
+            page.button("开启精确位置", primary = false) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
+                    REQ_LOCATION
+                )
+            }
+        }
 
         if (d == null && !loading && !hasLocationPermission()) {
             page.button("打开应用设置") { openAppSettings() }

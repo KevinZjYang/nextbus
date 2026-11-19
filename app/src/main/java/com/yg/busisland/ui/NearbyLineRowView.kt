@@ -73,14 +73,17 @@ object NearbyLineRowView {
         row.addView(left)
 
         row.addView(TextView(ctx).apply {
-            text = line.etaText.ifBlank { "—" }
-            textSize = 18f
+            val hasEta = line.etaText.isNotBlank()
+            text = if (hasEta) line.etaText else "—"
+            textSize = if (hasEta) 17f else 18f
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(
-                if (line.etaText.isNotBlank()) 0xFF1F7A3D.toInt()
-                else ctx.colorOnSurfaceVariant()
-            )
-            setPadding(ctx.dp(10), 0, 0, 0)
+            setTextColor(if (hasEta) 0xFF1F7A3D.toInt() else ctx.colorOnSurfaceVariant())
+            if (hasEta) {
+                background = com.yg.busisland.Ui.pill(0x1F1F7A3D, ctx.dp(13))
+                setPadding(ctx.dp(10), ctx.dp(4), ctx.dp(10), ctx.dp(4))
+            } else {
+                setPadding(ctx.dp(10), 0, 0, 0)
+            }
         })
         row.addView(TextView(ctx).apply {
             text = "›"

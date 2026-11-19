@@ -1,11 +1,7 @@
 package com.yg.busisland
 
 import android.app.AlertDialog
-import android.content.Intent
 import android.graphics.Color
-import android.location.Location
-import android.location.LocationListener
-import android.location.LocationManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -23,7 +19,7 @@ import org.json.JSONObject
 /**
  * 家/公司选点：搜索地点 / 一键定位 / 粘贴坐标 / 手动输入。
  */
-class PlacePickerActivity : com.yg.busisland.ui.PageActivity(), LocationListener {
+class PlacePickerActivity : com.yg.busisland.ui.PageActivity() {
 
     companion object {
         const val EXTRA_WHICH = "which"   // 兼容旧调用
@@ -40,11 +36,6 @@ class PlacePickerActivity : com.yg.busisland.ui.PageActivity(), LocationListener
     private lateinit var progress: ProgressBar
 
     private val handler = Handler(Looper.getMainLooper())
-    private var lm: LocationManager? = null
-    private var waitingFix = false
-    private var cancelSignals = mutableListOf<android.os.CancellationSignal>()
-    private var waitStart = 0L
-    private var waitTicker: Runnable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,7 +67,6 @@ class PlacePickerActivity : com.yg.busisland.ui.PageActivity(), LocationListener
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
-        stopWait()
         super.onDestroy()
     }
 
@@ -336,9 +326,7 @@ class PlacePickerActivity : com.yg.busisland.ui.PageActivity(), LocationListener
     // ------------------------------------------------------------ 定位
 
     private fun useCurrentLocation() {
-        if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!hasLocationPermission()) {
             requestPermissions(
                 arrayOf(
                     android.Manifest.permission.ACCESS_FINE_LOCATION,
@@ -347,136 +335,42 @@ class PlacePickerActivity : com.yg.busisland.ui.PageActivity(), LocationListener
             )
             return
         }
-        if (AmapLocator.available) {
-            showLoading(true, "高德定位中…")
-            AmapLocator.once(this, 15_000) { loc ->
-                if (loc != null) {
-                    showLoading(false, "高德定位成功（精度 ${loc.accuracy.toInt()}m）")
-                    onFix(loc, 0)
-                } else {
-                    showLoading(false, "高德定位失败，改用系统定位")
-                    systemLocate()
-                }
-            }
-            return
-        }
-        systemLocate()
-    }
-
-    private fun systemLocate() {
-        val mgr = (getSystemService(LOCATION_SERVICE) as LocationManager)
-        lm = mgr
-
-        val enabled = if (android.os.Build.VERSION.SDK_INT >= 28) mgr.isLocationEnabled else true
-        if (!enabled) {
-            AlertDialog.Builder(this)
-                .setTitle("系统定位已关闭")
-                .setMessage("请打开「位置信息」再试，或直接搜索地点 / 粘贴坐标。")
-                .setPositiveButton("去打开") { _, _ ->
-                    runCatching { startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
-                }
-                .setNegativeButton("取消", null)
-                .show()
-            return
-        }
-
-        val cached = bestLastKnown(mgr)
-        if (cached != null && System.currentTimeMillis() - cached.time <= 10 * 60_000) {
-            onFix(cached, 0)
-            return
-        }
-
-        waitingFix = true
-        waitStart = System.currentTimeMillis()
-        showLoading(true, "定位中… 0s（室内建议到窗边）")
-        startTicker()
-
-        try {
-            if (android.os.Build.VERSION.SDK_INT >= 30) {
-                for (p in listOf("fused", LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)) {
-                    if (!runCatching { mgr.isProviderEnabled(p) }.getOrDefault(false)) continue
-                    val cs = android.os.CancellationSignal()
-                    cancelSignals.add(cs)
-                    mgr.getCurrentLocation(p, cs, mainExecutor) { loc ->
-                        if (loc != null) onFix(loc, 0)
-                    }
-                }
+        showLoading(true, "定位中…（室内建议到窗边）")
+        LocationProvider.best(this) { fix ->
+            if (isFinishing || isDestroyed) return@best
+            if (fix != null) {
+                showLoading(false, "已定位（精度 ${accuracyText(fix)}）")
+                onFix(fix, 0)
             } else {
-                @Suppress("DEPRECATION")
-                mgr.requestSingleUpdate("fused", this, Looper.getMainLooper())
-                @Suppress("DEPRECATION")
-                mgr.requestSingleUpdate(LocationManager.NETWORK_PROVIDER, this, Looper.getMainLooper())
-            }
-        } catch (e: Exception) {
-            finishWait("定位启动失败：${e.message}")
-            return
-        }
-
-        handler.postDelayed({ if (waitingFix) onTimeout(cached) }, 25_000)
-    }
-
-    private fun bestLastKnown(mgr: LocationManager): Location? {
-        return listOf(
-            "fused",
-            LocationManager.GPS_PROVIDER,
-            LocationManager.NETWORK_PROVIDER,
-            LocationManager.PASSIVE_PROVIDER
-        ).mapNotNull { p -> runCatching { mgr.getLastKnownLocation(p) }.getOrNull() }
-            .maxByOrNull { it.time }
-    }
-
-    private fun startTicker() {
-        val r = object : Runnable {
-            override fun run() {
-                if (!waitingFix) return
-                val s = (System.currentTimeMillis() - waitStart) / 1000
-                status.text = "定位中… ${s}s（室内建议到窗边/室外）"
-                handler.postDelayed(this, 1000)
+                showLoading(false, "没有拿到有效定位")
+                onTimeout(null)
             }
         }
-        waitTicker = r
-        handler.postDelayed(r, 1000)
     }
 
-    private fun stopWait() {
-        waitingFix = false
-        waitTicker?.let { handler.removeCallbacks(it) }
-        cancelSignals.forEach { runCatching { it.cancel() } }
-        cancelSignals.clear()
-        runCatching { lm?.removeUpdates(this) }
-    }
+    private fun accuracyText(fix: LocationFix): String =
+        if (fix.hasAccuracy) "${fix.accuracyM.toInt()}m" else "未知"
 
-    private fun finishWait(msg: String) {
-        stopWait()
-        showLoading(false, msg)
-    }
-
-    private fun onFix(loc: Location, ageMin: Int) {
-        stopWait()
-        val acc = if (loc.hasAccuracy()) loc.accuracy.toInt() else -1
-        showLoading(false, "已定位（精度 ${if (acc >= 0) "${acc}m" else "未知"}）")
+    private fun onFix(fix: LocationFix, ageMin: Int) {
+        showLoading(false, "已定位（精度 ${accuracyText(fix)}）")
         val prefix = if (ageMin > 1) "（${ageMin} 分钟前的位置）" else ""
-        confirmSave(
-            placeName + prefix,
-            loc.latitude, loc.longitude, cityId()
-        )
+        confirmSave(placeName + prefix, fix.lat, fix.lng, cityId())
     }
 
-    private fun onTimeout(cached: Location?) {
-        stopWait()
-        val late = lm?.let { bestLastKnown(it) }
+    private fun onTimeout(cached: LocationFix?) {
+        val best = SystemLocator.lastGood(this) ?: cached
         val options = mutableListOf<String>()
-        if (cached != null || late != null) options.add("用最近一次缓存位置")
-        options.add("重新定位（25s）")
+        if (best != null) options.add("用最近一次缓存位置")
+        options.add("重新定位")
         options.add("改用搜索地点")
         options.add("粘贴坐标")
 
         AlertDialog.Builder(this)
-            .setTitle("定位超时（25 秒无新定位）")
+            .setTitle("定位超时")
             .setItems(options.toTypedArray()) { _, i ->
                 when (options[i]) {
-                    "用最近一次缓存位置" -> onFix((late ?: cached)!!, 999)
-                    "重新定位（25s）" -> useCurrentLocation()
+                    "用最近一次缓存位置" -> best?.let { onFix(it, 999) }
+                    "重新定位" -> useCurrentLocation()
                     "改用搜索地点" -> {
                         searchBox.requestFocus()
                         toast("输入小区/写字楼名称即可")
@@ -489,19 +383,15 @@ class PlacePickerActivity : com.yg.busisland.ui.PageActivity(), LocationListener
         showLoading(false, "定位超时")
     }
 
-    override fun onLocationChanged(location: Location) {
-        if (waitingFix) onFix(location, 0)
-    }
-
-    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-    override fun onProviderEnabled(provider: String) {}
-    override fun onProviderDisabled(provider: String) {}
+    private fun hasLocationPermission(): Boolean =
+        checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED ||
+            checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 200 && grantResults.isNotEmpty() &&
-            grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
+        if (requestCode == 200 && hasLocationPermission()) {
             useCurrentLocation()
         } else {
             toast("未授权定位，可改用搜索或粘贴坐标")
@@ -515,7 +405,7 @@ class PlacePickerActivity : com.yg.busisland.ui.PageActivity(), LocationListener
         val raw = cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString().orEmpty()
         val parsed = parseCoords(raw)
         if (parsed == null) {
-            toast("剪贴板里没有识别到坐标，例如：116.397,39.908")
+            toast("剪贴板里没有识别到坐标，例如：116.397,39.908（GCJ-02）")
             return
         }
         val (lat, lng) = parsed
@@ -553,7 +443,7 @@ class PlacePickerActivity : com.yg.busisland.ui.PageActivity(), LocationListener
         box.addView(lat)
         box.addView(lng)
         AlertDialog.Builder(this)
-            .setTitle("手动输入经纬度")
+            .setTitle("手动输入经纬度（GCJ-02）")
             .setView(box)
             .setPositiveButton("下一步") { _, _ ->
                 val la = lat.text.toString().toDoubleOrNull()
